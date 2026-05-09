@@ -11,36 +11,63 @@ const Reconcile = (() => {
   const nAmt   = v => Math.round((parseFloat(v) || 0) * 100) / 100;
   const AMT_TOL = 100; // ₹ tolerance
 
-  // ── Excel serial date → date string ───────────────────────────
-  function excelDateToStr(v) {
-    if (!v) return '';
-    if (v instanceof Date) return v.toLocaleDateString('en-IN');
-    if (typeof v === 'string' && v.trim()) return v.trim();
-    if (typeof v === 'number') {
-      // Excel epoch: Jan 0 1900 (serial 1 = Jan 1 1900)
-      const d = new Date(Math.round((v - 25569) * 86400 * 1000));
-      return d.toLocaleDateString('en-IN');
-    }
-    return String(v);
-  }
+  // ── shared month lookup ────────────────────────────────────────
+  const _MONTHS = {
+    jan:1,feb:2,mar:3,apr:4,may:5,jun:6,jul:7,aug:8,sep:9,oct:10,nov:11,dec:12,
+    january:1,february:2,march:3,april:4,june:6,july:7,august:8,
+    september:9,october:10,november:11,december:12
+  };
 
-  // ── parse a date string to YYYY-MM-DD for comparison ─────────
+  // Parse any date string → ISO "YYYY-MM-DD" or null
+  // Handles: DD/MM/YYYY, DD-MM-YYYY, DD.MM.YYYY, YYYY-MM-DD, YYYY/MM/DD,
+  //          DD Mon YYYY, DD-Mon-YYYY, Month DD YYYY, YYYYMMDD, D/M/YYYY
   function parseDate(str) {
     if (!str) return null;
-    // try en-IN format: DD/MM/YYYY or DD-MM-YYYY
-    let m = str.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})$/);
-    if (m) return `${m[3]}-${m[2].padStart(2,'0')}-${m[1].padStart(2,'0')}`;
-    // try ISO
+    str = String(str).trim().replace(/\s+/g, ' ');
+    let m;
+    // DD/MM/YYYY  DD-MM-YYYY  DD.MM.YYYY  (also D/M/YYYY locale)
+    m = str.match(/^(\d{1,2})[\/\-\.](\d{1,2})[\/\-\.](\d{4})$/);
+    if (m && +m[2] >= 1 && +m[2] <= 12 && +m[1] >= 1 && +m[1] <= 31)
+      return `${m[3]}-${m[2].padStart(2,'0')}-${m[1].padStart(2,'0')}`;
+    // YYYY-MM-DD  YYYY/MM/DD
     m = str.match(/^(\d{4})[\/\-](\d{1,2})[\/\-](\d{1,2})$/);
     if (m) return `${m[1]}-${m[2].padStart(2,'0')}-${m[3].padStart(2,'0')}`;
-    // try "01/Apr/2026" format
-    const months = {jan:'01',feb:'02',mar:'03',apr:'04',may:'05',jun:'06',jul:'07',aug:'08',sep:'09',oct:'10',nov:'11',dec:'12'};
-    m = str.match(/^(\d{1,2})[\/\-]([A-Za-z]{3})[\/\-](\d{4})$/);
-    if (m) {
-      const mo = months[m[2].toLowerCase()];
-      if (mo) return `${m[3]}-${mo}-${m[1].padStart(2,'0')}`;
-    }
+    // DD Mon YYYY  |  DD-Mon-YYYY  |  DD/Mon/YYYY
+    m = str.match(/^(\d{1,2})[\s\/\-]([A-Za-z]{3,9})[\s\/\-,]*(\d{4})$/);
+    if (m) { const mo = _MONTHS[m[2].toLowerCase()]; if (mo) return `${m[3]}-${String(mo).padStart(2,'0')}-${m[1].padStart(2,'0')}`; }
+    // Month DD, YYYY  |  Mon DD, YYYY
+    m = str.match(/^([A-Za-z]{3,9})\s+(\d{1,2}),?\s+(\d{4})$/);
+    if (m) { const mo = _MONTHS[m[1].toLowerCase()]; if (mo) return `${m[3]}-${String(mo).padStart(2,'0')}-${m[2].padStart(2,'0')}`; }
+    // Compact YYYYMMDD
+    m = str.match(/^(\d{4})(\d{2})(\d{2})$/);
+    if (m) return `${m[1]}-${m[2]}-${m[3]}`;
+    // Compact DDMMYYYY
+    m = str.match(/^(\d{2})(\d{2})(\d{4})$/);
+    if (m && +m[1] <= 31 && +m[2] <= 12) return `${m[3]}-${m[2]}-${m[1]}`;
     return null;
+  }
+
+  // Convert Excel cell value → DD/MM/YYYY string (same format as extractor output)
+  function excelDateToStr(v) {
+    if (!v && v !== 0) return '';
+    let str = '';
+    if (v instanceof Date) {
+      const d  = String(v.getDate()).padStart(2,'0');
+      const mo = String(v.getMonth() + 1).padStart(2,'0');
+      str = `${d}/${mo}/${v.getFullYear()}`;
+    } else if (typeof v === 'number') {
+      const dt = new Date(Math.round((v - 25569) * 86400 * 1000));
+      const d  = String(dt.getUTCDate()).padStart(2,'0');
+      const mo = String(dt.getUTCMonth() + 1).padStart(2,'0');
+      str = `${d}/${mo}/${dt.getUTCFullYear()}`;
+    } else {
+      str = String(v).trim();
+    }
+    // normalise any string format → DD/MM/YYYY
+    const iso = parseDate(str);
+    if (!iso) return str;
+    const [y, mo, d] = iso.split('-');
+    return `${d}/${mo}/${y}`;
   }
 
   function datesClose(d1, d2, toleranceDays = 3) {

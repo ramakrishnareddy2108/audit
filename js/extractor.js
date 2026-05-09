@@ -210,18 +210,104 @@ const Extractor = (() => {
     return '';
   }
 
+  // ── date parsing helpers ──────────────────────────────────────
+  const _MONTHS = {
+    jan:1,feb:2,mar:3,apr:4,may:5,jun:6,jul:7,aug:8,sep:9,oct:10,nov:11,dec:12,
+    january:1,february:2,march:3,april:4,june:6,july:7,august:8,
+    september:9,october:10,november:11,december:12
+  };
+
+  // Parse any common date string → ISO "YYYY-MM-DD" or null
+  function parseToISO(str) {
+    if (!str) return null;
+    str = String(str).trim().replace(/\s+/g, ' ');
+    let m;
+    // DD/MM/YYYY  DD-MM-YYYY  DD.MM.YYYY
+    m = str.match(/^(\d{1,2})[\/\-\.](\d{1,2})[\/\-\.](\d{4})$/);
+    if (m && +m[2] >= 1 && +m[2] <= 12 && +m[1] >= 1 && +m[1] <= 31)
+      return `${m[3]}-${m[2].padStart(2,'0')}-${m[1].padStart(2,'0')}`;
+    // YYYY-MM-DD  YYYY/MM/DD
+    m = str.match(/^(\d{4})[\/\-](\d{1,2})[\/\-](\d{1,2})$/);
+    if (m) return `${m[1]}-${m[2].padStart(2,'0')}-${m[3].padStart(2,'0')}`;
+    // DD Mon YYYY  |  DD-Mon-YYYY  |  DD/Mon/YYYY  |  DD Mon, YYYY
+    m = str.match(/^(\d{1,2})[\s\/\-]([A-Za-z]{3,9})[\s\/\-,]*(\d{4})$/);
+    if (m) { const mo = _MONTHS[m[2].toLowerCase()]; if (mo) return `${m[3]}-${String(mo).padStart(2,'0')}-${m[1].padStart(2,'0')}`; }
+    // Month DD, YYYY  |  Mon DD, YYYY
+    m = str.match(/^([A-Za-z]{3,9})\s+(\d{1,2}),?\s+(\d{4})$/);
+    if (m) { const mo = _MONTHS[m[1].toLowerCase()]; if (mo) return `${m[3]}-${String(mo).padStart(2,'0')}-${m[2].padStart(2,'0')}`; }
+    // Compact YYYYMMDD
+    m = str.match(/^(\d{4})(\d{2})(\d{2})$/);
+    if (m) return `${m[1]}-${m[2]}-${m[3]}`;
+    // Compact DDMMYYYY
+    m = str.match(/^(\d{2})(\d{2})(\d{4})$/);
+    if (m && +m[1] <= 31 && +m[2] <= 12) return `${m[3]}-${m[2]}-${m[1]}`;
+    return null;
+  }
+
+  // Normalise any date string → DD/MM/YYYY (matches GRN en-IN output)
+  function normaliseDate(str) {
+    const iso = parseToISO(str);
+    if (!iso) return str || '';
+    const [y, mo, d] = iso.split('-');
+    return `${d}/${mo}/${y}`;
+  }
+
+  // Extract invoice date from OCR text, skipping due/delivery/expiry dates
+  function extractInvoiceDate(text, lines) {
+    const DATE_RX  = /\b(\d{1,2}[\/\-\.]\d{1,2}[\/\-\.]\d{4}|\d{4}[\/\-]\d{2}[\/\-]\d{2}|\d{1,2}[\s\/\-][A-Za-z]{3,9}[\s\/\-,]*\d{4}|[A-Za-z]{3,9}\s+\d{1,2},?\s+\d{4})\b/g;
+    const LABEL_RX = /(?:invoice\s*date|inv\.?\s*date|bill\s*date|tax\s*invoice\s*date|date\s*of\s*invoice|dt\.?)\s*[:\-]?\s*/i;
+    const SKIP_RX  = /due\s*date|expiry|valid(?:ity)?|delivery|dispatch|ship|challan|po\s*date|order\s*date|e\.?w\.?b|lr\s*date/i;
+
+    // Pass 1: label + date on same line  e.g. "Invoice Date: 01/04/2026"
+    for (const line of lines) {
+      if (SKIP_RX.test(line)) continue;
+      if (LABEL_RX.test(line)) {
+        const after = line.replace(LABEL_RX, '');
+        const m = [...after.matchAll(DATE_RX)];
+        for (const hit of m) { const iso = parseToISO(hit[0]); if (iso) return normaliseDate(hit[0]); }
+      }
+    }
+    // Pass 2: label on one line, date on next line
+    for (let i = 0; i < lines.length - 1; i++) {
+      if (SKIP_RX.test(lines[i])) continue;
+      if (LABEL_RX.test(lines[i])) {
+        const m = [...lines[i+1].matchAll(DATE_RX)];
+        for (const hit of m) { const iso = parseToISO(hit[0]); if (iso) return normaliseDate(hit[0]); }
+      }
+    }
+    // Pass 3: bare "Date:" prefix
+    for (const line of lines) {
+      if (SKIP_RX.test(line)) continue;
+      if (/^\s*date\s*[:\-]/i.test(line)) {
+        const m = [...line.matchAll(DATE_RX)];
+        for (const hit of m) { const iso = parseToISO(hit[0]); if (iso) return normaliseDate(hit[0]); }
+      }
+    }
+    // Pass 4: first plausible date in text not near skip words
+    for (const line of text.split('\n')) {
+      if (SKIP_RX.test(line)) continue;
+      const m = [...line.matchAll(DATE_RX)];
+      for (const hit of m) {
+        const iso = parseToISO(hit[0]);
+        if (iso && iso >= '2020-01-01' && iso <= '2035-12-31') return normaliseDate(hit[0]);
+      }
+    }
+    return '';
+  }
+
   function parseInvoiceText(text) {
-    if (!text) return { vendor: '', invoice: '', gstin: '', amount: '', confidence: 'low' };
-    const lines   = text.split('\n').map(l => l.trim()).filter(Boolean);
-    const gstins  = [...text.matchAll(/\b([0-9]{2}[A-Z]{5}[0-9]{4}[A-Z][1-9A-Z]Z[0-9A-Z])\b/gi)].map(m => m[1].toUpperCase());
-    const gstin   = gstins[0] || '';
-    const invoice = extractInvoiceNo(lines);
-    const amount  = extractAmount(text, lines);
-    const vendor  = extractVendor(lines);
-    const filled  = [gstin, invoice, amount, vendor].filter(Boolean).length;
-    const invoiceOk = invoice && !isBadInvoiceNo(invoice);
-    const confidence = (filled >= 3 && invoiceOk) ? 'high' : filled >= 2 ? 'medium' : 'low';
-    return { vendor, invoice, gstin, amount, confidence };
+    if (!text) return { vendor: '', invoice: '', gstin: '', amount: '', invoiceDate: '', confidence: 'low' };
+    const lines       = text.split('\n').map(l => l.trim()).filter(Boolean);
+    const gstins      = [...text.matchAll(/\b([0-9]{2}[A-Z]{5}[0-9]{4}[A-Z][1-9A-Z]Z[0-9A-Z])\b/gi)].map(m => m[1].toUpperCase());
+    const gstin       = gstins[0] || '';
+    const invoice     = extractInvoiceNo(lines);
+    const amount      = extractAmount(text, lines);
+    const vendor      = extractVendor(lines);
+    const invoiceDate = extractInvoiceDate(text, lines);
+    const filled      = [gstin, invoice, amount, vendor, invoiceDate].filter(Boolean).length;
+    const invoiceOk   = invoice && !isBadInvoiceNo(invoice);
+    const confidence  = (filled >= 4 && invoiceOk) ? 'high' : filled >= 2 ? 'medium' : 'low';
+    return { vendor, invoice, gstin, amount, invoiceDate, confidence };
   }
 
   // ── main extract one page ─────────────────────────────────────
@@ -307,9 +393,14 @@ const Extractor = (() => {
 
   function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 
+  // Public wrapper: parse fields from raw OCR text only (no API call)
+  function parseFromOCR(ocrText) {
+    return parseInvoiceText(ocrText || '');
+  }
+
   return {
     setCredentials, hasCred, getCredSummary,
-    extractOnePage, parsePageRange, testConnection,
+    extractOnePage, parsePageRange, parseFromOCR, testConnection,
     get costPerPage() { return credMode === 'vision' ? COST_VISION : COST_CLAUDE; }
   };
 })();

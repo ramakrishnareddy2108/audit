@@ -255,6 +255,7 @@ async function _runExtractionPages(pagesList, forceRetry = false) {
   document.getElementById('extract-btn').disabled           = true;
   document.getElementById('extract-all-btn').disabled       = true;
   document.getElementById('retry-btn').style.display        = 'none';
+  document.getElementById('reparse-all-btn').style.display  = 'none';
   document.getElementById('stop-btn').style.display         = 'inline-block';
   document.getElementById('export-inv-btn').disabled        = true;
   document.getElementById('progress-fill').style.width      = '0%';
@@ -329,6 +330,16 @@ async function renderViewer() {
   cb.style.color = r?.confidence === 'high' ? '#057a55' : r?.confidence === 'low' ? '#c81e1e' : '#92400e';
   document.getElementById('page-cost').textContent = r?.cost > 0 ? `API cost: $${r.cost.toFixed(5)}` : '';
   document.getElementById('ocr-text-display').textContent = r?.ocrText || 'No OCR text available.';
+
+  // Re-parse button: enabled only when OCR text exists
+  const reparseBtn = document.getElementById('reparse-btn');
+  if (reparseBtn) {
+    const hasOCR = !!(r?.ocrText);
+    reparseBtn.disabled = !hasOCR;
+    reparseBtn.title = hasOCR
+      ? `Re-run field extraction on cached OCR text (${r.ocrText.length} chars) — free, no API call`
+      : 'No OCR text cached — use ↻ Re-extract first';
+  }
 
   // render PDF page live
   await PDFViewer.renderMainCanvas(curPage);
@@ -409,6 +420,54 @@ async function rotatePage(deg) {
   await PDFViewer.renderMainCanvas(curPage);
 }
 
+// Re-parse fields from cached OCR text — no API call, instant, free
+function reparseFromOCR() {
+  const r = results[curPage];
+  if (!r || !r.ocrText) {
+    alert('No OCR text found for this page. Use ↻ Re-extract to fetch from API first.');
+    return;
+  }
+  const data        = Extractor.parseFromOCR(r.ocrText);
+  const needsReview = data.confidence === 'low' || !data.vendor || !data.invoice || !data.amount;
+  // preserve ocrText and cost from original extraction, update fields only
+  results[curPage]  = { ...r, ...data, ocrText: r.ocrText, cost: r.cost, status: needsReview ? 'review' : 'ok', error: null };
+  Storage.markDirty();
+  renderViewer(); updateStatBars(); renderTable(); renderReviewQueue(); updateReviewBtn();
+  showSaveIndicator('⚡ Re-parsed from OCR');
+}
+
+// Bulk re-parse all pages that have cached OCR text
+function reparseAllFromOCR() {
+  const eligible = Object.values(results).filter(r => r.ocrText);
+  if (!eligible.length) {
+    alert('No pages have cached OCR text. Extract pages first.');
+    return;
+  }
+  showConfirm(
+    `Re-parse all ${eligible.length} pages from OCR?`,
+    'Instantly re-runs field extraction on all cached OCR text. No API cost.',
+    () => {
+      confirmCancel();
+      let updated = 0, nowOk = 0;
+      for (const r of eligible) {
+        const data        = Extractor.parseFromOCR(r.ocrText);
+        const needsReview = data.confidence === 'low' || !data.vendor || !data.invoice || !data.amount;
+        results[r.page]   = { ...r, ...data, ocrText: r.ocrText, cost: r.cost, status: needsReview ? 'review' : 'ok', error: null };
+        updated++;
+        if (!needsReview) nowOk++;
+      }
+      Storage.markDirty();
+      // refresh current viewer page
+      renderViewer(); updateStatBars(); renderTable(); renderReviewQueue(); updateReviewBtn();
+      setStatus(`⚡ Re-parsed ${updated} pages — ${nowOk} OK, ${updated - nowOk} need review`);
+      showProgress(true);
+      document.getElementById('status-dot').className        = 'dot done';
+      document.getElementById('status-dot').style.animation = 'none';
+      showSaveIndicator(`⚡ ${updated} pages re-parsed`);
+    }
+  );
+}
+
 async function reextract() {
   if (!PDFViewer.isLoaded() || !Extractor.hasCred()) { openSettings(); return; }
   if (results[curPage]) results[curPage].status = 'wait';
@@ -457,15 +516,24 @@ function updateStatBars() {
 
 function updateReviewBtn() {
   const needsAttention = r => r.status === 'error' || r.status === 'review' || (r.status === 'ok' && (!r.vendor || !r.invoice || !r.amount));
-  const rev     = Object.values(results).filter(needsAttention);
-  const btn     = document.getElementById('review-jump-btn');
-  const retryBtn = document.getElementById('retry-btn');
+  const rev          = Object.values(results).filter(needsAttention);
+  const withOCR      = Object.values(results).filter(r => r.ocrText);
+  const btn          = document.getElementById('review-jump-btn');
+  const retryBtn     = document.getElementById('retry-btn');
+  const reparseAllBtn = document.getElementById('reparse-all-btn');
+
   if (rev.length > 0) {
     if (btn)      { btn.style.display = 'inline-block'; btn.textContent = `⚠ ${rev.length} to review`; }
-    if (retryBtn && !processing) { retryBtn.style.display = 'inline-block'; }
+    if (retryBtn && !processing) retryBtn.style.display = 'inline-block';
   } else {
     if (btn)      btn.style.display = 'none';
     if (retryBtn) retryBtn.style.display = 'none';
+  }
+
+  // show Re-parse All whenever any page has OCR text, regardless of status
+  if (reparseAllBtn) {
+    reparseAllBtn.style.display = withOCR.length > 0 && !processing ? 'inline-block' : 'none';
+    reparseAllBtn.title = `Re-run field extraction on all ${withOCR.length} cached OCR pages — free, no API call`;
   }
 }
 

@@ -67,6 +67,7 @@
     <button class="btn-primary" id="extract-btn" onclick="startExtraction()">▶ Extract</button>
     <button id="extract-all-btn" onclick="startExtractionAll()">Extract All</button>
     <button id="retry-btn" style="display:none" class="btn-warn btn-sm" onclick="retryFailed()">↻ Retry Failed</button>
+    <button id="reparse-all-btn" style="display:none" class="btn-sm" onclick="reparseAllFromOCR()" title="Re-run field extraction on all cached OCR text — free, no API call">⚡ Re-parse All</button>
     <button id="stop-btn" style="display:none" class="btn-danger-outline" onclick="stopExtraction()">⏹ Stop</button>
     <span class="lbl" id="total-pages-lbl"></span>
     <span class="spacer"></span>
@@ -107,7 +108,8 @@
         <span class="key-hint">← → keys to navigate</span>
         <span class="spacer"></span>
         <button class="btn-sm" id="ocr-toggle-btn" onclick="toggleOCR()">Show OCR Text</button>
-        <button class="btn-sm" onclick="reextract()" id="reextract-btn">↻ Re-extract</button>
+        <button class="btn-sm" onclick="reparseFromOCR()" id="reparse-btn" title="Re-run field extraction on already-fetched OCR text — free, no API call">⚡ Re-parse OCR</button>
+        <button class="btn-sm" onclick="reextract()" id="reextract-btn" title="Re-fetch image from API and re-extract — costs API credit">↻ Re-extract</button>
       </div>
       <div class="viewer-grid" id="viewer-grid">
         <!-- Image panel -->
