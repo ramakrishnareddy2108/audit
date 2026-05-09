@@ -1,0 +1,351 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Invoice Extractor + GRN Reconciliation</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<link rel="stylesheet" href="css/styles.css">
+</head>
+<body>
+<div class="wrap">
+
+  <!-- HEADER -->
+  <div class="header">
+    <div class="header-icon">📄</div>
+    <div class="header-text">
+      <h1>Invoice Extractor</h1>
+      <p>Scan → Extract → Review → Reconcile with GRN</p>
+    </div>
+    <div class="header-actions">
+      <span id="autosave-indicator" class="autosave-dot" title="Auto-saving to localStorage every 30s"></span>
+      <button class="btn-sm btn-warn" onclick="openSettings()">⚙ Settings</button>
+    </div>
+  </div>
+
+  <!-- API KEY STATUS BAR -->
+  <div class="status-bar" id="cred-bar">
+    <span class="status-label">Extraction:</span>
+    <span id="cred-status" class="cred-warn">⚠ No API key — open Settings to configure</span>
+    <span class="spacer"></span>
+    <span class="cost-note">Google Vision: $1.50/1000 pages</span>
+  </div>
+
+  <!-- PDF UPLOAD ZONE -->
+  <div id="upload-zone" class="upload-zone"
+    onclick="document.getElementById('pdf-input').click()"
+    ondragover="event.preventDefault();this.classList.add('drag')"
+    ondragleave="this.classList.remove('drag')"
+    ondrop="this.classList.remove('drag');handlePdfDrop(event)">
+    <div class="upload-icon">📄</div>
+    <h3>Drop scanned invoice PDF here or click to browse</h3>
+    <p>One invoice per page · Supports hundreds of pages · Auto-saves progress</p>
+    <input type="file" id="pdf-input" accept=".pdf" style="display:none" onchange="loadPDF(this.files[0])">
+  </div>
+
+  <!-- SESSION BANNER (same PDF detected with saved data) -->
+  <div id="session-banner" style="display:none" class="session-banner">
+    <span class="session-icon">⏸</span>
+    <div class="session-info">
+      <strong>Saved session found for this PDF</strong>
+      <div id="session-info-text"></div>
+    </div>
+    <button class="btn-primary btn-sm" onclick="resumeSession()">↩ Resume</button>
+    <button class="btn-sm btn-danger-outline" onclick="discardSession()">✕ Start fresh</button>
+  </div>
+
+  <!-- CONTROLS BAR -->
+  <div id="controls" style="display:none" class="controls">
+    <span class="pdf-name" id="pdf-name-lbl"></span>
+    <span class="lbl">Pages:</span>
+    <input type="text" id="page-range-input" value="1-10" placeholder="1-10, 25, all"
+      title="Single: 5 | Range: 1-10 | Multiple: 1-10,25 | All: all"
+      style="width:130px;font-size:12px;padding:5px 8px;border:1px solid #d0d0d0;border-radius:6px">
+    <span class="lbl">Batch:</span>
+    <input type="number" id="batch-size" value="3" min="1" max="8" style="width:46px">
+    <button class="btn-primary" id="extract-btn" onclick="startExtraction()">▶ Extract</button>
+    <button id="extract-all-btn" onclick="startExtractionAll()">Extract All</button>
+    <button id="retry-btn" style="display:none" class="btn-warn btn-sm" onclick="retryFailed()">↻ Retry Failed</button>
+    <button id="stop-btn" style="display:none" class="btn-danger-outline" onclick="stopExtraction()">⏹ Stop</button>
+    <span class="lbl" id="total-pages-lbl"></span>
+    <span class="spacer"></span>
+    <button id="review-jump-btn" style="display:none" class="btn-warn btn-sm" onclick="jumpToReview()"></button>
+    <button class="btn-sm" id="load-data-btn" onclick="document.getElementById('json-input').click()" title="Import previously saved session JSON">📂 Load Data</button>
+    <input type="file" id="json-input" accept=".json" style="display:none" onchange="importSessionJSON(this.files[0])">
+    <button class="btn-sm btn-success" id="save-data-btn" onclick="saveSessionJSON()" title="Save all extracted data to JSON file">💾 Save Data</button>
+    <button class="btn-success btn-sm" id="export-inv-btn" disabled onclick="confirmExportInvoices()">⬇ Excel</button>
+    <button class="btn-sm" onclick="changePDF()">Change PDF</button>
+  </div>
+
+  <!-- PROGRESS BAR -->
+  <div id="progress-wrap" style="display:none" class="progress-wrap">
+    <div class="progress-bar"><div class="progress-fill" id="progress-fill" style="width:0%"></div></div>
+    <div class="progress-txt">
+      <span class="dot" id="status-dot" style="animation:pulse 1s infinite"></span>
+      <span id="status-txt">Processing…</span>
+      <span style="margin-left:auto;font-family:monospace;font-size:11px" id="cost-display"></span>
+    </div>
+  </div>
+
+  <!-- TABS -->
+  <div id="tabs-wrap" style="display:none">
+    <div class="tabs">
+      <button class="tab active" id="tab-viewer" onclick="switchTab('viewer')">📄 Page Viewer</button>
+      <button class="tab" id="tab-review" onclick="switchTab('review')">⚠ Review Queue</button>
+      <button class="tab" id="tab-table" onclick="switchTab('table')">📋 All Results</button>
+      <button class="tab" id="tab-grn" onclick="switchTab('grn')">🔄 GRN &amp; Reconciliation</button>
+    </div>
+
+    <!-- ═══ VIEWER TAB ═══ -->
+    <div id="pane-viewer">
+      <div class="stat-grid" id="stats-viewer"></div>
+      <div class="nav-bar">
+        <button onclick="navigate(-1)">← Prev</button>
+        <span class="page-info" id="page-info">—</span>
+        <button onclick="navigate(1)">Next →</button>
+        <span class="key-hint">← → keys to navigate</span>
+        <span class="spacer"></span>
+        <button class="btn-sm" id="ocr-toggle-btn" onclick="toggleOCR()">Show OCR Text</button>
+        <button class="btn-sm" onclick="reextract()" id="reextract-btn">↻ Re-extract</button>
+      </div>
+      <div class="viewer-grid" id="viewer-grid">
+        <!-- Image panel -->
+        <div class="panel">
+          <div class="panel-head">
+            <span id="img-panel-title">Page image</span>
+            <div style="display:flex;gap:6px;align-items:center">
+              <span id="confidence-badge" style="font-size:10px"></span>
+              <span id="status-badge"></span>
+            </div>
+          </div>
+          <div class="panel-body">
+            <div class="img-wrap" id="img-wrap" onclick="openZoom()">
+              <canvas id="page-canvas" style="width:100%;display:none"></canvas>
+              <div id="img-placeholder" class="img-placeholder">
+                <div style="font-size:36px;margin-bottom:8px">📄</div>
+                <div>Load PDF to view pages</div>
+              </div>
+              <div class="img-toolbar" onclick="event.stopPropagation()">
+                <button class="img-btn" title="Zoom" onclick="openZoom()">🔍</button>
+                <button class="img-btn" title="Rotate left" onclick="rotatePage(-90)">↺</button>
+                <button class="img-btn" title="Rotate right" onclick="rotatePage(90)">↻</button>
+              </div>
+            </div>
+            <div class="img-hint">Click image or 🔍 to zoom · ↺ ↻ to rotate · Re-extract after rotation</div>
+            <div id="page-cost" style="font-size:11px;color:#9ca3af;text-align:center;margin-top:4px"></div>
+          </div>
+        </div>
+        <!-- Fields panel -->
+        <div class="panel">
+          <div class="panel-head">
+            <span>Extracted Data</span>
+            <span id="save-indicator" style="font-size:11px;color:#057a55"></span>
+          </div>
+          <div class="panel-body" id="fields-panel">
+            <div class="empty-state">Extract pages to see data here.</div>
+          </div>
+        </div>
+        <!-- OCR panel (hidden by default) -->
+        <div class="panel" id="ocr-panel" style="display:none">
+          <div class="panel-head"><span>Raw OCR Text</span></div>
+          <div class="panel-body">
+            <div id="ocr-text-display" class="ocr-text">No OCR text available.</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ═══ REVIEW TAB ═══ -->
+    <div id="pane-review" style="display:none">
+      <div class="stat-grid" id="stats-review"></div>
+      <div id="review-list"></div>
+    </div>
+
+    <!-- ═══ TABLE TAB ═══ -->
+    <div id="pane-table" style="display:none">
+      <div class="stat-grid" id="stats-table"></div>
+      <div style="display:flex;gap:8px;align-items:center;margin-bottom:10px">
+        <input type="text" id="table-search" placeholder="Search vendor, GSTIN, invoice, page…"
+          oninput="renderTable()" style="flex:1;font-size:13px;padding:7px 12px;border:1px solid #d0d0d0;border-radius:8px">
+        <button class="btn-success btn-sm" onclick="confirmExportInvoices()">⬇ Export Excel</button>
+      </div>
+      <div class="tbl-wrap">
+        <table>
+          <thead><tr>
+            <th style="width:44px">Pg</th>
+            <th style="width:26%">Vendor Name</th>
+            <th style="width:15%">Invoice No.</th>
+            <th style="width:18%">GSTIN</th>
+            <th class="th-r" style="width:12%">Amount</th>
+            <th style="width:68px">Status</th>
+            <th style="width:64px">Cost</th>
+          </tr></thead>
+          <tbody id="results-tbody"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- ═══ GRN & RECONCILIATION TAB ═══ -->
+    <div id="pane-grn" style="display:none">
+      <div class="stat-grid" id="stats-grn"></div>
+
+      <div class="section-title">Step 1 — Upload GRN Excel File(s)</div>
+      <div id="grn-upload-zone" class="upload-zone upload-zone-sm"
+        onclick="document.getElementById('grn-input').click()"
+        ondragover="event.preventDefault();this.classList.add('drag')"
+        ondragleave="this.classList.remove('drag')"
+        ondrop="this.classList.remove('drag');handleGrnDrop(event)">
+        <div class="upload-icon" style="font-size:28px">📊</div>
+        <h3 style="font-size:14px">Drop GRN Excel files here or click</h3>
+        <p>Pharmacy · General Stores · Consignment · Capex</p>
+        <input type="file" id="grn-input" accept=".xlsx,.xls" multiple style="display:none"
+          onchange="loadGRNFiles(this.files)">
+      </div>
+      <div id="grn-file-list" style="margin-bottom:14px"></div>
+
+      <div class="section-title">Step 2 — Run Reconciliation</div>
+      <div class="recon-run-bar">
+        <div class="recon-readiness" id="recon-readiness">Upload GRN files and extract invoices to begin</div>
+        <button class="btn-primary" id="run-recon-btn" onclick="runReconciliation()" disabled>▶ Run Reconciliation</button>
+        <button class="btn-success" id="export-recon-btn" style="display:none" onclick="confirmExportRecon()">⬇ Export Excel</button>
+      </div>
+
+      <div id="recon-results" style="display:none">
+        <div class="recon-stats" id="recon-stat-cards"></div>
+        <div id="recon-diff-alert" style="margin-bottom:12px"></div>
+        <div style="display:flex;gap:8px;align-items:center;margin-bottom:10px;flex-wrap:wrap">
+          <input type="text" id="recon-search" placeholder="Search supplier, invoice, GRN no…"
+            oninput="renderReconTable()" style="flex:1;font-size:13px;padding:7px 12px;border:1px solid #d0d0d0;border-radius:8px">
+          <select id="recon-filter" onchange="renderReconTable()"
+            style="font-size:13px;padding:7px 10px;border:1px solid #d0d0d0;border-radius:8px;background:#fff">
+            <option value="">All statuses</option>
+            <option value="MATCHED">✅ Matched</option>
+            <option value="DISCREPANCY">⚠ Discrepancy</option>
+            <option value="UNMATCHED">❌ Unmatched</option>
+            <option value="GRN ONLY">📋 GRN Only</option>
+          </select>
+          <button class="btn-success btn-sm" onclick="confirmExportRecon()">⬇ Export Excel</button>
+        </div>
+        <div class="tbl-wrap">
+          <table style="font-size:11px">
+            <thead><tr>
+              <th style="width:110px">Status</th>
+              <th style="width:36px">Pg</th>
+              <th style="width:19%">Inv — Vendor</th>
+              <th style="width:12%">Inv — Invoice</th>
+              <th class="th-r" style="width:9%">Inv — Amt</th>
+              <th style="width:19%">GRN — Supplier</th>
+              <th style="width:12%">GRN — Invoice</th>
+              <th class="th-r" style="width:9%">GRN — Amt</th>
+              <th class="th-r" style="width:8%">Diff</th>
+              <th style="width:10%">GRN No</th>
+              <th style="width:8%">Type</th>
+              <th style="width:8%">Match by</th>
+            </tr></thead>
+            <tbody id="recon-tbody"></tbody>
+          </table>
+        </div>
+        <div class="recon-legend">
+          <span style="color:#276221">■ Matched</span> &nbsp;
+          <span style="color:#7D6608">■ Discrepancy</span> &nbsp;
+          <span style="color:#9C0006">■ Not in GRN</span> &nbsp;
+          <span style="color:#1F4E79">■ GRN Only</span>
+        </div>
+      </div>
+    </div>
+  </div>
+</div><!-- end .wrap -->
+
+<!-- ZOOM OVERLAY -->
+<div class="zoom-overlay" id="zoom-overlay" style="display:none" onclick="closeZoom()">
+  <div class="zoom-toolbar" onclick="event.stopPropagation()">
+    <button class="zoom-tbtn" onclick="adjZoom(-.25)">−</button>
+    <span id="zoom-pct" style="color:#fff;font-size:13px;min-width:46px;text-align:center">100%</span>
+    <button class="zoom-tbtn" onclick="adjZoom(.25)">+</button>
+    <button class="zoom-tbtn" onclick="resetZoom()">Reset</button>
+    <button class="zoom-tbtn" style="background:rgba(200,50,50,.7);margin-left:8px" onclick="closeZoom()">✕ Esc</button>
+  </div>
+  <div class="zoom-hint">Scroll to zoom · Drag to pan · Esc to close</div>
+  <div class="zoom-img-wrap" id="zoom-img-wrap"
+    onmousedown="zoomDragStart(event)" onmousemove="zoomDragMove(event)"
+    onmouseup="zoomDragEnd()" onmouseleave="zoomDragEnd()"
+    onwheel="zoomWheel(event)">
+    <canvas id="zoom-canvas" style="max-width:92vw;max-height:88vh;border-radius:4px;display:block" draggable="false"></canvas>
+  </div>
+</div>
+
+<!-- SETTINGS MODAL -->
+<div class="modal-overlay" id="settings-modal" style="display:none">
+  <div class="modal" style="max-width:560px">
+    <h3>⚙ API Settings</h3>
+    <p>Configure your Google Vision API credentials. Saved to browser localStorage only.</p>
+
+    <div class="api-mode-toggle">
+      <button id="mode-vision-btn" class="mode-btn active" onclick="setCredMode('vision')">Google Vision API</button>
+      <button id="mode-claude-btn" class="mode-btn" onclick="setCredMode('claude')">Claude API (Haiku)</button>
+    </div>
+
+    <!-- Vision inputs -->
+    <div id="vision-inputs">
+      <div class="alert alert-info" style="margin-bottom:10px;font-size:12px;line-height:1.7">
+        <strong>Option A — Plain API Key</strong>: Cloud Console → APIs &amp; Services → Credentials → Create API Key<br>
+        <strong>Option B — Service Account JSON</strong>: IAM → Service Accounts → Keys → Add Key → JSON<br>
+        Either way: enable <strong>Cloud Vision API</strong> in APIs &amp; Services → Library
+      </div>
+      <label class="field-lbl-sm">Plain API Key (AIzaSy…)</label>
+      <input type="password" id="vision-key-input" placeholder="AIzaSy…" class="full-input" style="margin-bottom:10px">
+      <label class="field-lbl-sm">OR Service Account JSON file</label>
+      <div id="sa-dropzone" class="sa-dropzone"
+        onclick="document.getElementById('sa-json-input').click()"
+        ondragover="event.preventDefault();this.style.borderColor='#1a56db'"
+        ondragleave="this.style.borderColor='#d0d0d0'"
+        ondrop="event.preventDefault();this.style.borderColor='#d0d0d0';loadSAFile(event.dataTransfer.files[0])">
+        <div id="sa-status" style="font-size:13px;color:#9ca3af">📁 Drop service account JSON here or click</div>
+        <input type="file" id="sa-json-input" accept=".json" style="display:none" onchange="loadSAFile(this.files[0])">
+      </div>
+      <div id="sa-info" style="display:none;font-size:11px;color:#6b7280;margin-top:6px;padding:6px 10px;background:#f9fafb;border-radius:6px"></div>
+    </div>
+
+    <!-- Claude inputs -->
+    <div id="claude-inputs" style="display:none">
+      <div class="alert alert-info" style="font-size:12px;line-height:1.7;margin-bottom:10px">
+        Uses <strong>Claude Haiku</strong> for OCR. Cost: ~$0.0014/page.<br>
+        Get key at: <strong>console.anthropic.com → API Keys</strong>
+      </div>
+      <label class="field-lbl-sm">Anthropic API Key</label>
+      <input type="password" id="claude-key-input" placeholder="sk-ant-api03-…" class="full-input">
+    </div>
+
+    <div id="test-result" style="margin-top:12px"></div>
+
+    <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:16px">
+      <button onclick="closeSettings()">Cancel</button>
+      <button onclick="testConnection()" style="display:flex;align-items:center;gap:6px">
+        <span id="test-spinner" style="display:none" class="spinner"></span>🔍 Test
+      </button>
+      <button class="btn-primary" onclick="saveSettings()">Save &amp; Close</button>
+    </div>
+  </div>
+</div>
+
+<!-- CONFIRM MODAL -->
+<div class="modal-overlay" id="confirm-modal" style="display:none">
+  <div class="modal">
+    <h3 id="confirm-title">Confirm</h3>
+    <p id="confirm-msg"></p>
+    <div class="modal-btns">
+      <button onclick="confirmCancel()">Cancel</button>
+      <button class="btn-primary" onclick="confirmOK()">Confirm</button>
+    </div>
+  </div>
+</div>
+
+<!-- SCRIPTS -->
+<script src="js/storage.js"></script>
+<script src="js/extractor.js"></script>
+<script src="js/pdf-viewer.js"></script>
+<script src="js/reconcile.js"></script>
+<script src="js/app.js"></script>
+</body>
+</html>
