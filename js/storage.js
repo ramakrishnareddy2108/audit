@@ -1,143 +1,146 @@
 // ═══════════════════════════════════════════════════════════════════
-// storage.js  —  JSON file persistence + localStorage auto-save
+// storage.js  —  v4: cycle-based JSON + localStorage auto-save
 // ═══════════════════════════════════════════════════════════════════
 
 const Storage = (() => {
-  const LS_KEY_PREFIX  = 'inv_session_';
+  const LS_CYCLE_KEY   = 'inv_cycle_v4';
   const LS_CRED_KEY    = 'inv_cred_v3';
-  const AUTOSAVE_MS    = 30_000; // 30 seconds
+  const AUTOSAVE_MS    = 30_000;
   let _autosaveTimer   = null;
-  let _pdfName         = '';
   let _dirty           = false;
 
-  // ── session key derived from PDF filename ──────────────────────
-  function sessionKey(name) {
-    return LS_KEY_PREFIX + (name || '').replace(/[^a-z0-9]/gi, '_').slice(0, 50);
+  function guessCycleLabel() {
+    return new Date().toLocaleString('en-IN', { month: 'short', year: 'numeric' });
+  }
+  function guessCycleMonth() {
+    return new Date().toISOString().slice(0, 7);
   }
 
-  // ── save entire results map to localStorage ────────────────────
-  function saveToLS(pdfName, totalPages, results, grnFiles, reconRows) {
-    const key = sessionKey(pdfName);
-    const payload = {
-      version: 3,
-      pdfName,
-      totalPages,
-      savedAt: new Date().toISOString(),
-      pages: results,
-      // save GRN parsed data (not raw binary)
-      grnData: grnFiles ? grnFiles.map(f => ({ name: f.name, count: f.count, rows: f.rows, error: f.error })) : [],
-      reconRows: reconRows || null
+  // ── migrate v3 payload → v4 ───────────────────────────────────
+  function migrateV3(p) {
+    if (p.version >= 4) return p;
+    const pdfName  = p.pdfName || 'unknown.pdf';
+    const newPages = {};
+    for (const [k, v] of Object.entries(p.pages || {})) {
+      const newKey = `${pdfName}::${k}`;
+      newPages[newKey] = { ...v, pageKey: newKey, sourcePdf: pdfName, page: parseInt(k) || v.page };
+    }
+    return {
+      version: 4, cycleLabel: guessCycleLabel(), cycleMonth: guessCycleMonth(),
+      createdAt: p.savedAt || p.exportedAt || new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      sources: [{ pdfName, addedAt: p.savedAt || new Date().toISOString(), pageCount: p.totalPages || 0 }],
+      pages: newPages, grnData: p.grnData || [],
+      creditNotes: [],
+      reconRows: (p.reconRows || []).map(r => ({
+        ...r, invoiceKey: r.page ? `${pdfName}::${r.page}` : null, sourcePdf: pdfName,
+        grnEntries: r.grnNo ? [{ grnNo: r.grnNo, grnDate: r.grnDate, supplier: r.grnSupplier,
+          invoiceNo: r.grnInvoice, amount: r.grnAmount, location: r.location, grnType: r.grnType }] : [],
+        grnTotal: r.grnAmount || 0, amountDiff: (r.invAmount||0) - (r.grnAmount||0),
+        resolution: null, resolutionNote: '', resolvedAt: null,
+        previousStatus: null, statusChangedAt: null, carriedFrom: null
+      })),
+      grnOnlyRows: [], carriedForward: []
     };
+  }
+
+  // ── blank v4 cycle ────────────────────────────────────────────
+  function newCycle(label) {
+    const now = new Date().toISOString();
+    return {
+      version: 4, cycleLabel: label || guessCycleLabel(),
+      cycleMonth: guessCycleMonth(), createdAt: now, updatedAt: now,
+      sources: [], pages: {}, grnData: [], creditNotes: [],
+      reconRows: [], grnOnlyRows: [], carriedForward: []
+    };
+  }
+
+  // ── localStorage ──────────────────────────────────────────────
+  function saveCycleToLS(cycle) {
+    if (!cycle) return false;
+    cycle.updatedAt = new Date().toISOString();
     try {
-      localStorage.setItem(key, JSON.stringify(payload));
-      _dirty = false;
-      return true;
+      localStorage.setItem(LS_CYCLE_KEY, JSON.stringify(cycle));
+      _dirty = false; return true;
     } catch (e) {
-      console.warn('localStorage save failed:', e);
-      return false;
-    }
-  }
-
-  // ── load from localStorage by pdfName ─────────────────────────
-  function loadFromLS(pdfName) {
-    const key = sessionKey(pdfName);
-    try {
-      const raw = localStorage.getItem(key);
-      if (!raw) return null;
-      return JSON.parse(raw);
-    } catch {
-      return null;
-    }
-  }
-
-  // ── list all saved sessions ────────────────────────────────────
-  function listSessions() {
-    const out = [];
-    for (let i = 0; i < localStorage.length; i++) {
-      const k = localStorage.key(i);
-      if (!k || !k.startsWith(LS_KEY_PREFIX)) continue;
       try {
-        const v = JSON.parse(localStorage.getItem(k));
-        if (v && v.pdfName) out.push(v);
-      } catch {}
+        const slim = JSON.parse(JSON.stringify(cycle));
+        for (const v of Object.values(slim.pages || {})) delete v.ocrText;
+        localStorage.setItem(LS_CYCLE_KEY, JSON.stringify(slim));
+        _dirty = false; return true;
+      } catch { return false; }
     }
-    return out.sort((a, b) => b.savedAt.localeCompare(a.savedAt));
   }
 
-  // ── delete a session ──────────────────────────────────────────
-  function deleteSession(pdfName) {
-    localStorage.removeItem(sessionKey(pdfName));
+  function loadCycleFromLS() {
+    try {
+      const raw = localStorage.getItem(LS_CYCLE_KEY);
+      if (!raw) return null;
+      const p = JSON.parse(raw);
+      return p.version >= 4 ? p : migrateV3(p);
+    } catch { return null; }
   }
 
-  // ── auto-save: start / stop / ping ────────────────────────────
-  function startAutosave(getState) {
+  function clearCycle() { localStorage.removeItem(LS_CYCLE_KEY); }
+
+  // ── autosave ──────────────────────────────────────────────────
+  function startAutosave(getCycle) {
     stopAutosave();
-    _autosaveTimer = setInterval(async () => {
+    _autosaveTimer = setInterval(() => {
       if (!_dirty) return;
-      const { pdfName, totalPages, results, grnFiles, reconRows } = getState();
-      if (!pdfName || !Object.keys(results).length) return;
-      const ok = saveToLS(pdfName, totalPages, results, grnFiles, reconRows);
-      updateAutosaveDot(ok ? 'saved' : 'error');
+      const cycle = getCycle();
+      if (!cycle || !Object.keys(cycle.pages || {}).length) return;
+      const ok = saveCycleToLS(cycle);
+      updateDot(ok ? 'saved' : 'error');
     }, AUTOSAVE_MS);
   }
-
-  function stopAutosave() {
-    if (_autosaveTimer) { clearInterval(_autosaveTimer); _autosaveTimer = null; }
-  }
-
-  function markDirty() { _dirty = true; updateAutosaveDot('saving'); }
-
-  function updateAutosaveDot(state) {
+  function stopAutosave() { if (_autosaveTimer) { clearInterval(_autosaveTimer); _autosaveTimer = null; } }
+  function markDirty()    { _dirty = true; updateDot('saving'); }
+  function updateDot(state) {
     const dot = document.getElementById('autosave-indicator');
     if (!dot) return;
     dot.className = 'autosave-dot ' + state;
     if (state === 'saved') {
-      dot.title = 'Auto-saved at ' + new Date().toLocaleTimeString();
+      dot.title = 'Auto-saved ' + new Date().toLocaleTimeString();
       setTimeout(() => { dot.className = 'autosave-dot'; }, 2000);
     }
   }
 
-  // ── export to JSON file (download) ────────────────────────────
-  function exportJSON(pdfName, totalPages, results, grnFiles, reconRows) {
-    const payload = {
-      version: 3,
-      pdfName,
-      totalPages,
-      exportedAt: new Date().toISOString(),
-      pages: results,
-      grnData: grnFiles ? grnFiles.map(f => ({ name: f.name, count: f.count, rows: f.rows })) : [],
-      reconRows: reconRows || null
-    };
-    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+  // ── file export ───────────────────────────────────────────────
+  function exportJSON(cycle) {
+    if (!cycle) return;
+    cycle.updatedAt = new Date().toISOString();
+    const blob = new Blob([JSON.stringify(cycle, null, 2)], { type: 'application/json' });
     const url  = URL.createObjectURL(blob);
-    const safe = (pdfName || 'invoices').replace(/[^a-z0-9]/gi, '_').replace(/\.pdf$/i, '');
+    const safe = (cycle.cycleLabel || 'cycle').replace(/[^a-z0-9]/gi, '_');
     const dt   = new Date().toISOString().slice(0, 10);
     const a    = document.createElement('a');
-    a.href = url; a.download = `${safe}_${dt}.json`;
+    a.href = url; a.download = `recon_${safe}_${dt}.json`;
     a.click(); URL.revokeObjectURL(url);
-    _dirty = false;
-    updateAutosaveDot('saved');
+    _dirty = false; updateDot('saved');
   }
 
-  // ── import JSON file (returns parsed payload) ──────────────────
   async function importJSON(file) {
     const text = await file.text();
-    const payload = JSON.parse(text);
-    if (!payload.pages) throw new Error('Invalid session file — missing pages data');
-    return payload;
+    const p = JSON.parse(text);
+    if (!p.pages) throw new Error('Invalid file — missing pages data');
+    return p.version >= 4 ? p : migrateV3(p);
   }
 
-  // ── credentials ───────────────────────────────────────────────
-  function saveCreds(obj) {
-    try { localStorage.setItem(LS_CRED_KEY, JSON.stringify(obj)); } catch {}
+  function getOpenItems(cycle) {
+    if (!cycle || !cycle.reconRows) return [];
+    return cycle.reconRows.filter(r =>
+      ['DISCREPANCY','PARTIAL','UNMATCHED','DISPUTED'].includes(r.status) &&
+      !['ACCEPTED','EXCLUDED'].includes(r.resolution)
+    );
   }
-  function loadCreds() {
-    try { return JSON.parse(localStorage.getItem(LS_CRED_KEY) || 'null'); } catch { return null; }
-  }
+
+  function saveCreds(obj)  { try { localStorage.setItem(LS_CRED_KEY, JSON.stringify(obj)); } catch {} }
+  function loadCreds()     { try { return JSON.parse(localStorage.getItem(LS_CRED_KEY)||'null'); } catch { return null; } }
 
   return {
-    saveToLS, loadFromLS, listSessions, deleteSession,
+    newCycle, migrateV3, saveCycleToLS, loadCycleFromLS, clearCycle,
     startAutosave, stopAutosave, markDirty, exportJSON, importJSON,
-    saveCreds, loadCreds
+    getOpenItems, saveCreds, loadCreds
   };
 })();

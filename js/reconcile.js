@@ -1,353 +1,412 @@
 // ═══════════════════════════════════════════════════════════════════
-// reconcile.js  —  GRN parsing + reconciliation engine
-// Matches on: INVOICE NO + SUPPLIER NAME + INVOICE DATE
-// Amount tolerance: ±₹100
+// reconcile.js  —  v4: multi-GRN grouping, CA-grade status lifecycle
 // ═══════════════════════════════════════════════════════════════════
 
 const Reconcile = (() => {
+  const norm    = s => String(s||'').toLowerCase().replace(/[\s.\-\/\\,&']/g,'').trim();
+  const nAmt    = v => Math.round((parseFloat(v)||0)*100)/100;
+  const AMT_TOL = 100;
 
-  // ── normalise strings for fuzzy matching ──────────────────────
-  const norm   = s => String(s || '').toLowerCase().replace(/[\s.\-\/\\,&']/g, '').trim();
-  const nAmt   = v => Math.round((parseFloat(v) || 0) * 100) / 100;
-  const AMT_TOL = 100; // ₹ tolerance
-
-  // ── shared month lookup ────────────────────────────────────────
-  const _MONTHS = {
+  // ── month table ───────────────────────────────────────────────
+  const _M = {
     jan:1,feb:2,mar:3,apr:4,may:5,jun:6,jul:7,aug:8,sep:9,oct:10,nov:11,dec:12,
     january:1,february:2,march:3,april:4,june:6,july:7,august:8,
     september:9,october:10,november:11,december:12
   };
 
-  // Parse any date string → ISO "YYYY-MM-DD" or null
-  // Handles: DD/MM/YYYY, DD-MM-YYYY, DD.MM.YYYY, YYYY-MM-DD, YYYY/MM/DD,
-  //          DD Mon YYYY, DD-Mon-YYYY, Month DD YYYY, YYYYMMDD, D/M/YYYY
   function parseDate(str) {
     if (!str) return null;
-    str = String(str).trim().replace(/\s+/g, ' ');
+    str = String(str).trim().replace(/\s+/g,' ');
     let m;
-    // DD/MM/YYYY  DD-MM-YYYY  DD.MM.YYYY  (also D/M/YYYY locale)
     m = str.match(/^(\d{1,2})[\/\-\.](\d{1,2})[\/\-\.](\d{4})$/);
-    if (m && +m[2] >= 1 && +m[2] <= 12 && +m[1] >= 1 && +m[1] <= 31)
+    if (m && +m[2]>=1 && +m[2]<=12 && +m[1]>=1 && +m[1]<=31)
       return `${m[3]}-${m[2].padStart(2,'0')}-${m[1].padStart(2,'0')}`;
-    // YYYY-MM-DD  YYYY/MM/DD
     m = str.match(/^(\d{4})[\/\-](\d{1,2})[\/\-](\d{1,2})$/);
     if (m) return `${m[1]}-${m[2].padStart(2,'0')}-${m[3].padStart(2,'0')}`;
-    // DD Mon YYYY  |  DD-Mon-YYYY  |  DD/Mon/YYYY
     m = str.match(/^(\d{1,2})[\s\/\-]([A-Za-z]{3,9})[\s\/\-,]*(\d{4})$/);
-    if (m) { const mo = _MONTHS[m[2].toLowerCase()]; if (mo) return `${m[3]}-${String(mo).padStart(2,'0')}-${m[1].padStart(2,'0')}`; }
-    // Month DD, YYYY  |  Mon DD, YYYY
+    if (m) { const mo=_M[m[2].toLowerCase()]; if(mo) return `${m[3]}-${String(mo).padStart(2,'0')}-${m[1].padStart(2,'0')}`; }
     m = str.match(/^([A-Za-z]{3,9})\s+(\d{1,2}),?\s+(\d{4})$/);
-    if (m) { const mo = _MONTHS[m[1].toLowerCase()]; if (mo) return `${m[3]}-${String(mo).padStart(2,'0')}-${m[2].padStart(2,'0')}`; }
-    // Compact YYYYMMDD
-    m = str.match(/^(\d{4})(\d{2})(\d{2})$/);
-    if (m) return `${m[1]}-${m[2]}-${m[3]}`;
-    // Compact DDMMYYYY
-    m = str.match(/^(\d{2})(\d{2})(\d{4})$/);
-    if (m && +m[1] <= 31 && +m[2] <= 12) return `${m[3]}-${m[2]}-${m[1]}`;
+    if (m) { const mo=_M[m[1].toLowerCase()]; if(mo) return `${m[3]}-${String(mo).padStart(2,'0')}-${m[2].padStart(2,'0')}`; }
+    m = str.match(/^(\d{4})(\d{2})(\d{2})$/); if(m) return `${m[1]}-${m[2]}-${m[3]}`;
+    m = str.match(/^(\d{2})(\d{2})(\d{4})$/); if(m && +m[1]<=31 && +m[2]<=12) return `${m[3]}-${m[2]}-${m[1]}`;
     return null;
   }
 
-  // Convert Excel cell value → DD/MM/YYYY string (same format as extractor output)
   function excelDateToStr(v) {
-    if (!v && v !== 0) return '';
-    let str = '';
-    if (v instanceof Date) {
-      const d  = String(v.getDate()).padStart(2,'0');
-      const mo = String(v.getMonth() + 1).padStart(2,'0');
-      str = `${d}/${mo}/${v.getFullYear()}`;
-    } else if (typeof v === 'number') {
-      const dt = new Date(Math.round((v - 25569) * 86400 * 1000));
-      const d  = String(dt.getUTCDate()).padStart(2,'0');
-      const mo = String(dt.getUTCMonth() + 1).padStart(2,'0');
-      str = `${d}/${mo}/${dt.getUTCFullYear()}`;
-    } else {
-      str = String(v).trim();
-    }
-    // normalise any string format → DD/MM/YYYY
-    const iso = parseDate(str);
-    if (!iso) return str;
-    const [y, mo, d] = iso.split('-');
-    return `${d}/${mo}/${y}`;
+    if (!v && v!==0) return '';
+    let str='';
+    if (v instanceof Date) { const d=String(v.getDate()).padStart(2,'0'),mo=String(v.getMonth()+1).padStart(2,'0'); str=`${d}/${mo}/${v.getFullYear()}`; }
+    else if (typeof v==='number') { const dt=new Date(Math.round((v-25569)*86400*1000)),d=String(dt.getUTCDate()).padStart(2,'0'),mo=String(dt.getUTCMonth()+1).padStart(2,'0'); str=`${d}/${mo}/${dt.getUTCFullYear()}`; }
+    else str=String(v).trim();
+    const iso=parseDate(str); if(!iso) return str;
+    const[y,mo,d]=iso.split('-'); return `${d}/${mo}/${y}`;
   }
 
-  function datesClose(d1, d2, toleranceDays = 3) {
-    const p1 = parseDate(d1), p2 = parseDate(d2);
-    if (!p1 || !p2) return true; // if either date missing, don't penalise
-    const diff = Math.abs(new Date(p1) - new Date(p2)) / 86400000;
-    return diff <= toleranceDays;
+  function datesClose(d1,d2,tol=3) {
+    const p1=parseDate(d1),p2=parseDate(d2);
+    if(!p1||!p2) return true;
+    return Math.abs(new Date(p1)-new Date(p2))/86400000<=tol;
   }
 
-  // ── vendor name similarity ────────────────────────────────────
-  // Strips common suffixes (limited, ltd, pvt, private, co, corp, pharma, etc.)
-  // before comparing so "CIPLA LIMITED" matches "CIPLA LTD"
-  const STRIP_SUFFIX = /(?:limited|ltd|pvt|private|llp|llc|corp|corporation|company|co|enterprises|pharma|pharmaceuticals|labs|laboratories|trading|distributors|suppliers|agencies|agency|brothers|bros|industries|ind|international|intl|& sons|and sons)$/gi;
+  // ── vendor matching ───────────────────────────────────────────
+  const STRIP_SUFFIX = /(?:limited|ltd|pvt|private|llp|llc|corp|corporation|company|co|enterprises|pharma|pharmaceuticals|labs|laboratories|trading|distributors|suppliers|agencies|agency|brothers|bros|industries|ind|international|intl|&sons|andsons)$/gi;
+  const coreVendor   = s => norm(s).replace(STRIP_SUFFIX,'').replace(/[^a-z0-9]/g,'').trim();
 
-  function coreVendorName(s) {
-    return norm(s).replace(STRIP_SUFFIX, '').replace(/[^a-z0-9]/g, '').trim();
-  }
-
-  function vendorMatch(inv, grn) {
-    const n1 = norm(inv), n2 = norm(grn);
-    if (!n1 || !n2) return false;
-    // exact normalised match
-    if (n1 === n2) return true;
-    // strip suffixes and compare cores
-    const c1 = coreVendorName(inv), c2 = coreVendorName(grn);
-    if (c1 && c2 && c1 === c2) return true;
-    // one core contains the other (min 5 chars to avoid false positives)
-    const minLen = 5;
-    if (c1.length >= minLen && c2.length >= minLen) {
-      if (c2.includes(c1) || c1.includes(c2)) return true;
-    }
-    // prefix match on full normalised name (first 8 chars)
-    const pfxLen = 8;
-    if (n1.length >= pfxLen && n2.length >= pfxLen) {
-      if (n1.slice(0, pfxLen) === n2.slice(0, pfxLen)) return true;
-    }
+  function vendorMatch(inv,grn) {
+    const n1=norm(inv),n2=norm(grn);
+    if(!n1||!n2) return false;
+    if(n1===n2) return true;
+    const c1=coreVendor(inv),c2=coreVendor(grn);
+    if(c1&&c2&&c1===c2) return true;
+    if(c1.length>=5&&c2.length>=5&&(c2.includes(c1)||c1.includes(c2))) return true;
+    if(n1.length>=8&&n2.length>=8&&n1.slice(0,8)===n2.slice(0,8)) return true;
     return false;
   }
 
-  // ── parse GRN Excel file ──────────────────────────────────────
+  // ── parse GRN Excel ───────────────────────────────────────────
   function parseGRNFile(arrayBuffer, fileName) {
-    const wb   = XLSX.read(arrayBuffer, { type: 'array', cellDates: true });
-    const rows = [];
-
+    const wb  = XLSX.read(arrayBuffer,{type:'array',cellDates:true});
+    const out = [];
     for (const shName of wb.SheetNames) {
       const ws  = wb.Sheets[shName];
-      const raw = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' });
-      if (raw.length < 2) continue;
-
-      // find header row (contains "SUPPLIER NAME")
-      let hdrIdx = -1;
-      for (let i = 0; i < Math.min(raw.length, 8); i++) {
-        if (raw[i].some(c => String(c).toLowerCase().includes('supplier name'))) {
-          hdrIdx = i; break;
-        }
+      const raw = XLSX.utils.sheet_to_json(ws,{header:1,defval:''});
+      if (raw.length<2) continue;
+      let hdrIdx=-1;
+      for(let i=0;i<Math.min(raw.length,8);i++){
+        if(raw[i].some(c=>String(c).toLowerCase().includes('supplier name'))){hdrIdx=i;break;}
       }
-      if (hdrIdx < 0) continue;
-
-      const hdr = raw[hdrIdx].map(c => String(c).toUpperCase().trim());
-      const col = k => hdr.findIndex(h => h.includes(k));
-
-      // column indices
-      const iSup  = col('SUPPLIER NAME');
-      const iGst  = col('SUPPLIER GST');
-      const iInv  = col('INVOICE NO');
-      const iIdt  = col('INVOICE DATE');
-      const iAmt  = col('TOTAL INVOICE AMOUNT') >= 0
-                      ? col('TOTAL INVOICE AMOUNT')
-                      : col('TOTAL INVOICE');
-      const iGrn  = col('GRN NO') >= 0 ? col('GRN NO') : col('CGRN NO');
-      const iGdt  = col('GRN DATE') >= 0 ? col('GRN DATE') : col('CGRN DATE');
-      const iLoc  = col('PHARMACY LOCATION NAME') >= 0
-                      ? col('PHARMACY LOCATION NAME')
-                      : col('STORES LOCATION NAME');
-      const iPoNo = col('PO NO');
-
-      const src     = fileName.toLowerCase();
-      const grnType = src.includes('pharmacy')     ? 'Pharmacy'
-                    : src.includes('consignment')  ? 'Consignment'
-                    : src.includes('capex')        ? 'Capex'
-                    : 'General Stores';
-
-      for (let i = hdrIdx + 1; i < raw.length; i++) {
-        const r   = raw[i];
-        const sup = String(r[iSup] || '').trim();
-        if (!sup || sup === 'SUPPLIER NAME') continue;
-
-        const invoiceNo  = iInv >= 0  ? String(r[iInv]  || '').trim() : '';
-        const invoiceAmt = iAmt >= 0  ? (parseFloat(r[iAmt]) || 0)     : 0;
-        if (!invoiceNo && !invoiceAmt) continue; // skip blank rows
-
-        rows.push({
-          grnType,
-          supplier:       sup,
-          supplierGstin:  iGst >= 0  ? String(r[iGst]  || '').trim() : '',
-          invoiceNo,
-          invoiceDate:    iIdt >= 0  ? excelDateToStr(r[iIdt])       : '',
-          grnNo:          iGrn >= 0  ? String(r[iGrn]  || '').trim() : '',
-          grnDate:        iGdt >= 0  ? excelDateToStr(r[iGdt])       : '',
-          totalAmount:    invoiceAmt,
-          location:       iLoc >= 0  ? String(r[iLoc]  || '').trim() : '',
-          poNo:           iPoNo >= 0 ? String(r[iPoNo] || '').trim() : '',
-          _src: fileName
+      if(hdrIdx<0) continue;
+      const hdr=raw[hdrIdx].map(c=>String(c).toUpperCase().trim());
+      const col=k=>hdr.findIndex(h=>h.includes(k));
+      const iSup=col('SUPPLIER NAME'),iGst=col('SUPPLIER GST'),iInv=col('INVOICE NO'),
+            iIdt=col('INVOICE DATE'),
+            iAmt=col('TOTAL INVOICE AMOUNT')>=0?col('TOTAL INVOICE AMOUNT'):col('TOTAL INVOICE'),
+            iGrn=col('GRN NO')>=0?col('GRN NO'):col('CGRN NO'),
+            iGdt=col('GRN DATE')>=0?col('GRN DATE'):col('CGRN DATE'),
+            iLoc=col('PHARMACY LOCATION NAME')>=0?col('PHARMACY LOCATION NAME'):col('STORES LOCATION NAME'),
+            iPoNo=col('PO NO');
+      const src=fileName.toLowerCase();
+      const grnType=src.includes('pharmacy')?'Pharmacy':src.includes('consignment')?'Consignment':src.includes('capex')?'Capex':'General Stores';
+      for(let i=hdrIdx+1;i<raw.length;i++){
+        const r=raw[i];
+        const sup=String(r[iSup]||'').trim();
+        if(!sup||sup==='SUPPLIER NAME') continue;
+        const invoiceNo=iInv>=0?String(r[iInv]||'').trim():'';
+        const invoiceAmt=iAmt>=0?(parseFloat(r[iAmt])||0):0;
+        if(!invoiceNo&&!invoiceAmt) continue;
+        out.push({
+          grnType, supplier:sup, supplierGstin:iGst>=0?String(r[iGst]||'').trim():'',
+          invoiceNo, invoiceDate:iIdt>=0?excelDateToStr(r[iIdt]):'',
+          grnNo:iGrn>=0?String(r[iGrn]||'').trim():'',
+          grnDate:iGdt>=0?excelDateToStr(r[iGdt]):'',
+          totalAmount:invoiceAmt,
+          location:iLoc>=0?String(r[iLoc]||'').trim():'',
+          poNo:iPoNo>=0?String(r[iPoNo]||'').trim():'',
+          _src:fileName, _id:`${fileName}_${i}`
         });
       }
     }
-    return rows;
-  }
-
-  // ── main reconciliation logic ─────────────────────────────────
-  // Match priority:
-  //   1. Invoice No exact match (normalised)
-  //   2. Invoice No + Vendor + Date (if inv no missing)
-  //   3. Vendor + Amount (fallback, loose)
-  function run(results, grnFiles) {
-    const invoices = Object.values(results).filter(r => r.status === 'ok' || r.status === 'manual');
-    const allGrn   = grnFiles.flatMap(f => f.rows);
-    if (!invoices.length || !allGrn.length) return [];
-
-    const out  = [];
-    const used = new Set();
-
-    for (const inv of invoices) {
-      const invNo  = norm(inv.invoice);
-      const vendor = norm(inv.vendor);
-      const amt    = nAmt(inv.amount);
-      const invDt  = inv.invoiceDate || '';
-
-      let match = null, matchBy = '';
-
-      // Pass 1: exact invoice number match
-      if (invNo) {
-        match = allGrn.find(g =>
-          !used.has(g._id) &&
-          norm(g.invoiceNo) === invNo
-        );
-        if (match) matchBy = 'Invoice No';
-      }
-
-      // Pass 2: invoice no + vendor + date (handles missing/garbled amounts)
-      if (!match && invNo) {
-        match = allGrn.find(g =>
-          !used.has(g._id) &&
-          norm(g.invoiceNo) === invNo &&
-          vendorMatch(inv.vendor, g.supplier)
-        );
-        if (match) matchBy = 'Invoice No + Vendor';
-      }
-
-      // Pass 3: vendor + amount within tolerance
-      if (!match && vendor.length >= 4) {
-        match = allGrn.find(g =>
-          !used.has(g._id) &&
-          vendorMatch(inv.vendor, g.supplier) &&
-          Math.abs(nAmt(g.totalAmount) - amt) <= AMT_TOL
-        );
-        if (match) matchBy = 'Vendor + Amount';
-      }
-
-      // Build discrepancy list
-      const disc = [];
-      if (match) {
-        used.add(match._id);
-        const ga   = nAmt(match.totalAmount);
-        const diff = nAmt(amt - ga);
-        if (Math.abs(diff) > AMT_TOL)
-          disc.push({ field: 'Amount', invoice: amt, grn: ga, diff, pct: ga ? ((diff / ga) * 100).toFixed(1) : '—' });
-        if (invNo && match.invoiceNo && norm(match.invoiceNo) !== invNo)
-          disc.push({ field: 'Invoice No', invoice: inv.invoice, grn: match.invoiceNo });
-        if (inv.vendor && match.supplier && !vendorMatch(inv.vendor, match.supplier))
-          disc.push({ field: 'Vendor', invoice: inv.vendor, grn: match.supplier });
-      }
-
-      out.push({
-        page:        inv.page,
-        invVendor:   inv.vendor   || '',
-        invInvoice:  inv.invoice  || '',
-        invGstin:    inv.gstin    || '',
-        invAmount:   amt,
-        invDate:     inv.invoiceDate || '',
-        grnSupplier: match?.supplier  || '',
-        grnInvoice:  match?.invoiceNo || '',
-        grnGstin:    match?.supplierGstin || '',
-        grnAmount:   match ? nAmt(match.totalAmount) : 0,
-        grnNo:       match?.grnNo    || '',
-        grnDate:     match?.grnDate  || '',
-        grnType:     match?.grnType  || '',
-        location:    match?.location || '',
-        matchBy,
-        status: !match ? 'UNMATCHED' : disc.some(d => d.field === 'Amount') ? 'DISCREPANCY' : 'MATCHED',
-        discrepancies: disc
-      });
-    }
-
-    // GRN-only rows (in GRN but not matched to any invoice)
-    allGrn.filter(g => !used.has(g._id)).forEach(g => out.push({
-      page: null, invVendor: '', invInvoice: '', invGstin: '', invAmount: 0, invDate: '',
-      grnSupplier: g.supplier, grnInvoice: g.invoiceNo, grnGstin: g.supplierGstin,
-      grnAmount: nAmt(g.totalAmount), grnNo: g.grnNo, grnDate: g.grnDate,
-      grnType: g.grnType, location: g.location, matchBy: '', status: 'GRN ONLY', discrepancies: []
-    }));
-
     return out;
   }
 
-  // ── Excel export ─────────────────────────────────────────────
-  function exportExcel(reconRows, invoiceResults) {
-    const wb = XLSX.utils.book_new();
-
-    // Sheet 1: full reconciliation
-    const ws1 = XLSX.utils.json_to_sheet(reconRows.map(r => ({
-      'Status':            r.status,
-      'Page':              r.page || '',
-      'Match by':          r.matchBy || '',
-      'Inv — Vendor':      r.invVendor,
-      'Inv — Invoice':     r.invInvoice,
-      'Inv — GSTIN':       r.invGstin,
-      'Inv — Amount (₹)':  r.invAmount || '',
-      'GRN — Supplier':    r.grnSupplier,
-      'GRN — Invoice':     r.grnInvoice,
-      'GRN — GSTIN':       r.grnGstin,
-      'GRN — Amount (₹)':  r.grnAmount || '',
-      'GRN No':            r.grnNo,
-      'GRN Date':          r.grnDate,
-      'GRN Type':          r.grnType,
-      'Location':          r.location,
-      'Amount Diff (₹)':   r.discrepancies.find(d => d.field === 'Amount')?.diff || 0,
-      'Diff %':            r.discrepancies.find(d => d.field === 'Amount')?.pct || '',
-      'Discrepancies':     r.discrepancies.map(d => `${d.field}: Inv=${d.invoice} vs GRN=${d.grn}`).join(' | '),
-    })));
-    ws1['!cols'] = [14,6,16,28,18,18,14,28,18,18,14,20,12,12,20,12,8,40].map(w => ({ wch: w }));
-    XLSX.utils.book_append_sheet(wb, ws1, 'Reconciliation');
-
-    // Sheet 2: discrepancies only
-    const disc = reconRows.filter(r => r.status !== 'MATCHED');
-    if (disc.length) {
-      const ws2 = XLSX.utils.json_to_sheet(disc.map(r => ({
-        'Status':        r.status,
-        'Page':          r.page || '',
-        'Vendor':        r.invVendor || r.grnSupplier,
-        'Inv Invoice':   r.invInvoice,
-        'GRN Invoice':   r.grnInvoice,
-        'Inv Amt (₹)':   r.invAmount || '',
-        'GRN Amt (₹)':   r.grnAmount || '',
-        'Diff (₹)':      r.discrepancies.find(d => d.field === 'Amount')?.diff || '',
-        'Diff %':        r.discrepancies.find(d => d.field === 'Amount')?.pct || '',
-        'Action':        r.status === 'UNMATCHED'   ? 'Invoice not found in GRN'
-                       : r.status === 'GRN ONLY'    ? 'GRN entry has no matching invoice'
-                       : 'Review discrepancy',
-      })));
-      ws2['!cols'] = [14,6,30,18,18,14,14,12,8,35].map(w => ({ wch: w }));
-      XLSX.utils.book_append_sheet(wb, ws2, 'Discrepancies');
+  // ── group GRN rows by normalised invoice number ───────────────
+  function buildGRNIndex(allGrn) {
+    // primary index: invoiceNo → [rows]
+    const byInv = new Map();
+    for (const g of allGrn) {
+      const k = norm(g.invoiceNo);
+      if (!k) continue;
+      if (!byInv.has(k)) byInv.set(k,[]);
+      byInv.get(k).push(g);
     }
-
-    // Sheet 3: summary
-    const tInv   = reconRows.filter(r => r.page).reduce((s, r) => s + (r.invAmount || 0), 0);
-    const tGrn   = reconRows.reduce((s, r) => s + (r.grnAmount || 0), 0);
-    const matched = reconRows.filter(r => r.status === 'MATCHED').length;
-    const discN   = reconRows.filter(r => r.status === 'DISCREPANCY').length;
-    const unm     = reconRows.filter(r => r.status === 'UNMATCHED').length;
-    const grnOnly = reconRows.filter(r => r.status === 'GRN ONLY').length;
-    const ws3 = XLSX.utils.aoa_to_sheet([
-      ['RECONCILIATION SUMMARY'], [''],
-      ['Total invoices extracted', reconRows.filter(r => r.page).length],
-      ['Total GRN entries',        reconRows.length],
-      [''],
-      ['✅ Matched',               matched],
-      ['⚠ Discrepancy',            discN],
-      ['❌ Invoice not in GRN',    unm],
-      ['📋 GRN with no invoice',   grnOnly],
-      [''],
-      ['Invoice total (₹)',  tInv],
-      ['GRN total (₹)',      tGrn],
-      ['Net difference (₹)', parseFloat((tInv - tGrn).toFixed(2))],
-    ]);
-    ws3['!cols'] = [{ wch: 30 }, { wch: 20 }];
-    XLSX.utils.book_append_sheet(wb, ws3, 'Summary');
-
-    XLSX.writeFile(wb, `reconciliation_${new Date().toISOString().slice(0, 7)}.xlsx`);
+    return byInv;
   }
 
-  return { parseGRNFile, run, exportExcel, norm, nAmt };
+  // ── determine status from amounts ─────────────────────────────
+  function calcStatus(invAmt, grnTotal, grnCount) {
+    if (grnCount === 0)           return 'UNMATCHED';
+    const diff = Math.abs(invAmt - grnTotal);
+    if (diff <= AMT_TOL)          return 'MATCHED';
+    if (grnTotal < invAmt - AMT_TOL) return 'PARTIAL';  // GRNs received but total is short
+    return 'DISCREPANCY';
+  }
+
+  // ── preserve CA resolution on re-run ─────────────────────────
+  function preserveResolution(newRow, prevRow) {
+    if (!prevRow || !prevRow.resolution) return newRow;
+    const res       = prevRow.resolution;
+    const prevDiff  = Math.abs(prevRow.amountDiff || 0);
+    const newDiff   = Math.abs(newRow.amountDiff  || 0);
+    const diffChanged = Math.abs(newDiff - prevDiff) > AMT_TOL;
+
+    if (res === 'ACCEPTED') {
+      if (diffChanged) {
+        // amount materially changed — force re-review
+        return { ...newRow, status: 'DISCREPANCY',
+          previousStatus: 'ACCEPTED', statusChangedAt: new Date().toISOString(),
+          resolutionNote: `[Auto] Amount diff changed from ₹${prevDiff.toFixed(0)} to ₹${newDiff.toFixed(0)} — re-review needed. Previous note: ${prevRow.resolutionNote||''}` };
+      }
+      // same diff — keep accepted
+      return { ...newRow, resolution: 'ACCEPTED',
+        resolutionNote: prevRow.resolutionNote, resolvedAt: prevRow.resolvedAt };
+    }
+    if (res === 'DISPUTED' || res === 'EXCLUDED') {
+      // always sticky — CA must manually resolve
+      return { ...newRow, resolution: res,
+        resolutionNote: prevRow.resolutionNote, resolvedAt: prevRow.resolvedAt };
+    }
+    if (res === 'CREDIT_NOTE') {
+      // keep tracking if still unresolved
+      return { ...newRow, resolution: 'CREDIT_NOTE',
+        resolutionNote: prevRow.resolutionNote, resolvedAt: prevRow.resolvedAt };
+    }
+    return newRow;
+  }
+
+  // ── main reconciliation run ───────────────────────────────────
+  function run(cycle, prevReconRows) {
+    const pages  = cycle.pages || {};
+    const allGrn = (cycle.grnData || []).flatMap(f => f.rows || []);
+    if (!allGrn.length) return { reconRows: [], grnOnlyRows: [] };
+
+    // assign stable _id if missing
+    allGrn.forEach((g,i) => { if(!g._id) g._id=`${g._src||'grn'}_${i}`; });
+
+    const invoices = Object.values(pages)
+      .filter(r => r.status==='ok'||r.status==='manual')
+      .sort((a,b) => (a.sourcePdf||'').localeCompare(b.sourcePdf||'')||(a.page-b.page));
+
+    // build lookup maps
+    const grnByInv  = buildGRNIndex(allGrn);
+    const prevByKey = new Map((prevReconRows||[]).map(r=>[r.invoiceKey,r]));
+    const usedIds   = new Set();
+    const reconRows = [];
+
+    for (const inv of invoices) {
+      const invNo  = norm(inv.invoice);
+      const invAmt = nAmt(inv.amount);
+      const pageKey = inv.pageKey || `${inv.sourcePdf}::${inv.page}`;
+
+      // ── collect all matching GRN rows ─────────────────────────
+      let matched = [];
+      let matchBy = '';
+
+      // Pass 1: invoice number → collect ALL matching GRN rows
+      if (invNo) {
+        const candidates = (grnByInv.get(invNo)||[]).filter(g=>!usedIds.has(g._id));
+        if (candidates.length) { matched = candidates; matchBy = 'Invoice No'; }
+      }
+
+      // Pass 2: invoice no + vendor (for cases with same inv no from diff vendors)
+      if (!matched.length && invNo) {
+        const allCandidates = allGrn.filter(g=>!usedIds.has(g._id)&&norm(g.invoiceNo)===invNo&&vendorMatch(inv.vendor,g.supplier));
+        if (allCandidates.length) { matched = allCandidates; matchBy = 'Invoice No + Vendor'; }
+      }
+
+      // Pass 3: vendor + amount fallback (no invoice no on either side)
+      if (!matched.length && norm(inv.vendor).length>=4) {
+        const fb = allGrn.filter(g=>!usedIds.has(g._id)&&vendorMatch(inv.vendor,g.supplier)&&Math.abs(nAmt(g.totalAmount)-invAmt)<=AMT_TOL);
+        if (fb.length) { matched = fb; matchBy = 'Vendor + Amount'; }
+      }
+
+      // mark used
+      matched.forEach(g=>usedIds.add(g._id));
+
+      const grnTotal = matched.reduce((s,g)=>s+nAmt(g.totalAmount),0);
+      const amountDiff = nAmt(invAmt - grnTotal);
+      const status = calcStatus(invAmt, grnTotal, matched.length);
+
+      const newRow = {
+        invoiceKey:  pageKey,
+        sourcePdf:   inv.sourcePdf || '',
+        page:        inv.page,
+        invVendor:   inv.vendor    || '',
+        invInvoice:  inv.invoice   || '',
+        invGstin:    inv.gstin     || '',
+        invAmount:   invAmt,
+        invDate:     inv.invoiceDate || '',
+        grnEntries:  matched.map(g=>({
+          grnNo: g.grnNo, grnDate: g.grnDate,
+          supplier: g.supplier, invoiceNo: g.invoiceNo,
+          amount: nAmt(g.totalAmount), location: g.location,
+          grnType: g.grnType, supplierGstin: g.supplierGstin||''
+        })),
+        grnTotal:    nAmt(grnTotal),
+        amountDiff,
+        matchBy,
+        status,
+        resolution:      null,
+        resolutionNote:  '',
+        resolvedAt:      null,
+        previousStatus:  null,
+        statusChangedAt: null,
+        carriedFrom:     null
+      };
+
+      // apply carry-forward / previous resolution
+      const prev = prevByKey.get(pageKey);
+      const finalRow = preserveResolution(newRow, prev);
+
+      // flag status change for CA awareness
+      if (prev && prev.status !== finalRow.status && !finalRow.previousStatus) {
+        finalRow.previousStatus  = prev.status;
+        finalRow.statusChangedAt = new Date().toISOString();
+      }
+
+      reconRows.push(finalRow);
+    }
+
+    // GRN-only rows
+    const grnOnlyRows = allGrn
+      .filter(g=>!usedIds.has(g._id))
+      .map(g=>({
+        grnNo: g.grnNo, grnDate: g.grnDate,
+        supplier: g.supplier, invoiceNo: g.invoiceNo,
+        supplierGstin: g.supplierGstin||'',
+        amount: nAmt(g.totalAmount),
+        location: g.location, grnType: g.grnType,
+        resolution: null, resolutionNote: '', resolvedAt: null,
+        _id: g._id
+      }));
+
+    return { reconRows, grnOnlyRows };
+  }
+
+  // ── summary stats ─────────────────────────────────────────────
+  function getStats(reconRows, grnOnlyRows, carriedForward) {
+    const rows = reconRows || [];
+    return {
+      total:       rows.length,
+      matched:     rows.filter(r=>r.status==='MATCHED'&&!r.resolution).length,
+      discrepancy: rows.filter(r=>r.status==='DISCREPANCY'&&!['ACCEPTED','EXCLUDED','DISPUTED','CREDIT_NOTE'].includes(r.resolution)).length,
+      partial:     rows.filter(r=>r.status==='PARTIAL'&&!r.resolution).length,
+      unmatched:   rows.filter(r=>r.status==='UNMATCHED'&&r.resolution!=='EXCLUDED').length,
+      accepted:    rows.filter(r=>r.resolution==='ACCEPTED').length,
+      disputed:    rows.filter(r=>r.resolution==='DISPUTED').length,
+      creditNote:  rows.filter(r=>r.resolution==='CREDIT_NOTE').length,
+      excluded:    rows.filter(r=>r.resolution==='EXCLUDED').length,
+      grnOnly:     (grnOnlyRows||[]).length,
+      carried:     (carriedForward||[]).length,
+      needsAction: rows.filter(r=>needsAction(r)).length,
+      invTotal:    rows.reduce((s,r)=>s+(r.invAmount||0),0),
+      grnTotal:    rows.reduce((s,r)=>s+(r.grnTotal||0),0)
+    };
+  }
+
+  function needsAction(r) {
+    if (['ACCEPTED','EXCLUDED'].includes(r.resolution)) return false;
+    return ['DISCREPANCY','PARTIAL','UNMATCHED'].includes(r.status);
+  }
+
+  // ── Excel export (CA-grade, 7 sheets) ────────────────────────
+  function exportExcel(cycle) {
+    const rows    = cycle.reconRows    || [];
+    const grnOnly = cycle.grnOnlyRows  || [];
+    const cns     = cycle.creditNotes  || [];
+    const carried = cycle.carriedForward || [];
+    const wb      = XLSX.utils.book_new();
+    const fmt     = r => {
+      const grnNos  = (r.grnEntries||[]).map(g=>g.grnNo).filter(Boolean).join(', ');
+      const grnAmts = (r.grnEntries||[]).map(g=>`${g.grnNo||'?'}=₹${g.amount}`).join(' | ');
+      return {
+        'Status':          r.resolution ? `${r.status} [${r.resolution}]` : r.status,
+        'Page':            r.page||'',
+        'Source PDF':      r.sourcePdf||'',
+        'Inv — Vendor':    r.invVendor,
+        'Inv — Invoice':   r.invInvoice,
+        'Inv — GSTIN':     r.invGstin,
+        'Inv — Amount(₹)': r.invAmount||'',
+        'Inv — Date':      r.invDate||'',
+        'GRN Count':       (r.grnEntries||[]).length,
+        'GRN Nos':         grnNos,
+        'GRN Amounts':     grnAmts,
+        'GRN Total(₹)':    r.grnTotal||'',
+        'Diff(₹)':         r.amountDiff||0,
+        'Match by':        r.matchBy||'',
+        'Resolution':      r.resolution||'',
+        'Notes':           r.resolutionNote||'',
+        'Resolved at':     r.resolvedAt||'',
+        'Prev Status':     r.previousStatus||'',
+        'Carried from':    r.carriedFrom||''
+      };
+    };
+
+    // Sheet 1: Summary
+    const st = getStats(rows, grnOnly, carried);
+    const ws1 = XLSX.utils.aoa_to_sheet([
+      [`RECONCILIATION SUMMARY — ${cycle.cycleLabel||''}`],[`Generated: ${new Date().toLocaleString('en-IN')}`],[''],
+      ['STATUS','COUNT','AMOUNT (₹)'],
+      ['✅ Matched',        st.matched,     rows.filter(r=>r.status==='MATCHED'&&!r.resolution).reduce((s,r)=>s+(r.invAmount||0),0)],
+      ['⚠ Discrepancy',    st.discrepancy, rows.filter(r=>r.status==='DISCREPANCY'&&!['ACCEPTED','EXCLUDED','DISPUTED','CREDIT_NOTE'].includes(r.resolution)).reduce((s,r)=>s+(r.invAmount||0),0)],
+      ['🔶 Partial',       st.partial,     rows.filter(r=>r.status==='PARTIAL'&&!r.resolution).reduce((s,r)=>s+(r.invAmount||0),0)],
+      ['❌ Unmatched',     st.unmatched,   rows.filter(r=>r.status==='UNMATCHED'&&r.resolution!=='EXCLUDED').reduce((s,r)=>s+(r.invAmount||0),0)],
+      ['🔵 Accepted',      st.accepted,    rows.filter(r=>r.resolution==='ACCEPTED').reduce((s,r)=>s+(r.invAmount||0),0)],
+      ['🚩 Disputed',      st.disputed,    rows.filter(r=>r.resolution==='DISPUTED').reduce((s,r)=>s+(r.invAmount||0),0)],
+      ['📝 Credit Note',   st.creditNote,  rows.filter(r=>r.resolution==='CREDIT_NOTE').reduce((s,r)=>s+(r.invAmount||0),0)],
+      ['⊘ Excluded',       st.excluded,    rows.filter(r=>r.resolution==='EXCLUDED').reduce((s,r)=>s+(r.invAmount||0),0)],
+      ['📋 GRN Only',      st.grnOnly,     grnOnly.reduce((s,r)=>s+(r.amount||0),0)],
+      ['📦 Carried Fwd',   st.carried,     ''],
+      [''],
+      ['Invoice Total (₹)', st.invTotal],
+      ['GRN Total (₹)',      st.grnTotal],
+      ['Net Difference (₹)', parseFloat((st.invTotal-st.grnTotal).toFixed(2))],
+    ]);
+    ws1['!cols']=[{wch:24},{wch:10},{wch:18}];
+    XLSX.utils.book_append_sheet(wb,ws1,'Summary');
+
+    // Sheet 2: Needs Action
+    const needsActionRows = rows.filter(r=>needsAction(r));
+    const ws2 = XLSX.utils.json_to_sheet(needsActionRows.map(fmt));
+    ws2['!cols']=[14,6,20,28,16,18,14,12,8,24,30,14,12,16,12,30,16,14,14].map(w=>({wch:w}));
+    XLSX.utils.book_append_sheet(wb,ws2,'Needs Action');
+
+    // Sheet 3: All Transactions
+    const ws3 = XLSX.utils.json_to_sheet(rows.map(fmt));
+    ws3['!cols']=[14,6,20,28,16,18,14,12,8,24,30,14,12,16,12,30,16,14,14].map(w=>({wch:w}));
+    XLSX.utils.book_append_sheet(wb,ws3,'All Transactions');
+
+    // Sheet 4: GRN Only
+    const ws4 = XLSX.utils.json_to_sheet(grnOnly.map(g=>({
+      'GRN No':g.grnNo,'GRN Date':g.grnDate,'Supplier':g.supplier,
+      'Invoice No':g.invoiceNo,'GSTIN':g.supplierGstin,
+      'Amount(₹)':g.amount,'Location':g.location,'Type':g.grnType,
+      'Resolution':g.resolution||'','Notes':g.resolutionNote||''
+    })));
+    ws4['!cols']=[16,12,28,16,18,14,20,12,12,30].map(w=>({wch:w}));
+    XLSX.utils.book_append_sheet(wb,ws4,'GRN Only');
+
+    // Sheet 5: Resolved
+    const resolved = rows.filter(r=>['ACCEPTED','EXCLUDED','DISPUTED','CREDIT_NOTE'].includes(r.resolution));
+    if(resolved.length){
+      const ws5=XLSX.utils.json_to_sheet(resolved.map(fmt));
+      ws5['!cols']=[14,6,20,28,16,18,14,12,8,24,30,14,12,16,12,30,16,14,14].map(w=>({wch:w}));
+      XLSX.utils.book_append_sheet(wb,ws5,'Resolved');
+    }
+
+    // Sheet 6: Credit Notes
+    if(cns.length){
+      const ws6=XLSX.utils.json_to_sheet(cns.map(c=>({
+        'CN Number':c.cnNumber,'Vendor':c.vendor,'Amount(₹)':c.amount,
+        'Date':c.date,'Against Invoice':c.againstInvoice||'','Notes':c.note||''
+      })));
+      ws6['!cols']=[16,28,14,12,16,30].map(w=>({wch:w}));
+      XLSX.utils.book_append_sheet(wb,ws6,'Credit Notes');
+    }
+
+    // Sheet 7: Carry Forward
+    if(carried.length){
+      const ws7=XLSX.utils.json_to_sheet(carried.map(c=>({
+        'From Cycle':c.fromCycle, 'Invoice':c.originalRow?.invInvoice||'',
+        'Vendor':c.originalRow?.invVendor||'', 'Amount(₹)':c.originalRow?.invAmount||'',
+        'Status':c.originalRow?.status||'', 'Notes':c.carryNote||''
+      })));
+      ws7['!cols']=[14,16,28,14,14,30].map(w=>({wch:w}));
+      XLSX.utils.book_append_sheet(wb,ws7,'Carry Forward');
+    }
+
+    const label = (cycle.cycleLabel||'recon').replace(/[^a-z0-9]/gi,'_');
+    XLSX.writeFile(wb,`reconciliation_${label}_${new Date().toISOString().slice(0,10)}.xlsx`);
+  }
+
+  return { parseGRNFile, run, getStats, needsAction, exportExcel, norm, nAmt, parseDate };
 })();

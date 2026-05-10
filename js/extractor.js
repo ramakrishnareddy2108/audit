@@ -198,14 +198,30 @@ const Extractor = (() => {
   }
 
   function extractVendor(lines) {
-    const stopRx = /gstin|gst\s*no|invoice|bill\s*no|date|phone|mobile|email|www\.|tel:|fax:|p\.o\.|po\s*box|pin|pincode/i;
-    const addrRx = /\d.*road|street|nagar|colony|floor|plot|ward|near|opp|s\.no|survey|block|building|district|mandal|state|code\s*:/i;
-    const skipRx = /^(tax\s*invoice|original|duplicate|mode|credit|debit|gstin|m\/s|to\s*:|buyer|seller|ship|bill\s*to|consignee)$/i;
-    for (const l of lines.slice(0, 15)) {
-      if (stopRx.test(l)) break;
-      if (addrRx.test(l)) continue;
-      if (skipRx.test(l)) continue;
-      if (l.length >= 4 && !/^\d/.test(l) && !/^[-–—]/.test(l)) return l;
+    const buyerBlockRx = /^(m\/s\b|to\s*:|bill\s*to|buyer|consignee|ship\s*to|sold\s*to|party\s*name)/i;
+    const skipLineRx   = /^(tax\s*invoice|retail\s*invoice|original|duplicate|triplicate|gstin|gst\s*no\.?|mode|terms|credit|debit|e\.?way|subject|invoice\s*no|bill\s*no|proforma)$/i;
+    const addrRx       = /\d.*(?:road|street|nagar|colony|floor|plot|ward|near|opp|s\.no|survey|block|building|district|mandal|phase|sector)|p\.?o\.?\s*box|pin\s*code|pincode|\b\d{6}\b/i;
+    const contactRx    = /phone|mobile|cell|tel[:\s]|fax|email|www\.|@|gstin\s*:/i;
+
+    // Pass 1: collect candidates before buyer block
+    const candidates = [];
+    for (const l of lines.slice(0, 25)) {
+      const t = l.trim();
+      if (!t) continue;
+      if (buyerBlockRx.test(t)) break;
+      if (skipLineRx.test(t))   continue;
+      if (addrRx.test(t))       continue;
+      if (contactRx.test(t))    break;
+      if (t.length >= 4 && !/^\d/.test(t) && !/^[-–—_*#]/.test(t)) candidates.push(t);
+    }
+    if (candidates.length) return candidates[0];
+
+    // Pass 2: wider fallback, skip M/s lines (buyer)
+    for (const l of lines.slice(0, 30)) {
+      const t = l.trim();
+      if (!t || addrRx.test(t) || contactRx.test(t) || skipLineRx.test(t)) continue;
+      if (/^m\/s\b/i.test(t)) continue;
+      if (t.length >= 4 && !/^\d/.test(t)) return t;
     }
     return '';
   }

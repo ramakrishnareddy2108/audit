@@ -345,3 +345,258 @@ tr.selected td { background: #eff6ff; }
 @media (max-width: 600px) {
   .review-body { grid-template-columns: 1fr 1fr; }
 }
+
+/* ═══════════════════════════════════════════════════════════════════
+   CYCLE BANNER
+═══════════════════════════════════════════════════════════════════ */
+.cycle-banner {
+  background: #eff6ff; border: 1px solid #93c5fd; border-radius: 10px;
+  padding: 12px 16px; margin-bottom: 12px;
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+}
+.cycle-banner strong { font-size: 13px; color: #1e3a5f; }
+.cycle-banner .cycle-sub { font-size: 12px; color: #6b7280; }
+.cycle-label-input {
+  font-size: 13px; padding: 5px 10px; border: 1px solid #93c5fd;
+  border-radius: 6px; background: #fff; font-weight: 600; color: #1e3a5f;
+  width: 140px;
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+   MASTER-DETAIL RECON LAYOUT
+═══════════════════════════════════════════════════════════════════ */
+.recon-master-detail {
+  display: grid; grid-template-columns: 340px 1fr;
+  gap: 14px; min-height: 600px; align-items: start;
+}
+@media (max-width: 900px) {
+  .recon-master-detail { grid-template-columns: 1fr; }
+}
+
+/* ── left panel ─────────────────────────────────────────────── */
+.recon-left {
+  background: #fff; border-radius: 12px;
+  box-shadow: 0 1px 4px rgba(0,0,0,.08);
+  overflow: hidden; display: flex; flex-direction: column;
+  max-height: 700px;
+}
+.recon-left-toolbar {
+  padding: 10px 12px; border-bottom: 1px solid #e5e7eb;
+  display: flex; flex-direction: column; gap: 6px; flex-shrink: 0;
+}
+.recon-left-toolbar input {
+  font-size: 12px; padding: 6px 10px;
+  border: 1px solid #d0d0d0; border-radius: 6px; width: 100%;
+}
+.recon-filter-row { display: flex; gap: 6px; align-items: center; }
+.recon-filter-row select {
+  flex: 1; font-size: 11px; padding: 5px 6px;
+  border: 1px solid #d0d0d0; border-radius: 6px; background: #fff;
+}
+.recon-unresolved-toggle {
+  font-size: 11px; color: #6b7280; display: flex; align-items: center; gap: 4px;
+  cursor: pointer; white-space: nowrap;
+}
+.recon-sections { overflow-y: auto; flex: 1; }
+
+/* ── section headers ────────────────────────────────────────── */
+.recon-section-hdr {
+  padding: 8px 12px; font-size: 11px; font-weight: 700;
+  text-transform: uppercase; letter-spacing: .5px;
+  cursor: pointer; display: flex; align-items: center; gap: 6px;
+  border-bottom: 1px solid #e5e7eb; user-select: none;
+  position: sticky; top: 0; z-index: 2;
+}
+.recon-section-hdr:hover { opacity: .85; }
+.recon-section-hdr .count {
+  margin-left: auto; font-size: 11px; font-weight: 700;
+  background: rgba(0,0,0,.08); border-radius: 10px; padding: 1px 7px;
+}
+.recon-section-hdr .chevron { font-size: 10px; transition: transform .15s; }
+.recon-section-hdr.collapsed .chevron { transform: rotate(-90deg); }
+
+.shr-attention { background: #fff5f5; color: #9b1c1c; }
+.shr-partial    { background: #fff8ed; color: #92400e; }
+.shr-matched    { background: #f0fdf4; color: #166534; }
+.shr-grnonly    { background: #f0f9ff; color: #0c4a6e; }
+.shr-resolved   { background: #f5f3ff; color: #4c1d95; }
+.shr-carried    { background: #fef9c3; color: #713f12; }
+
+/* ── invoice cards ──────────────────────────────────────────── */
+.recon-card {
+  padding: 10px 12px; border-bottom: 1px solid #f3f4f6;
+  cursor: pointer; transition: background .1s;
+}
+.recon-card:hover  { background: #f9fafb; }
+.recon-card.active { background: #eff6ff; border-left: 3px solid #1a56db; }
+.rc-vendor  { font-size: 12px; font-weight: 600; color: #1a1a2e; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.rc-meta    { font-size: 11px; color: #6b7280; margin-top: 2px; display: flex; gap: 8px; flex-wrap: wrap; }
+.rc-diff    { font-size: 11px; font-weight: 600; }
+.rc-diff.neg { color: #c81e1e; }
+.rc-diff.pos { color: #057a55; }
+.rc-status-dot {
+  width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; margin-top: 3px;
+}
+.rc-card-row { display: flex; gap: 8px; align-items: flex-start; }
+
+/* status dot colours */
+.sd-MATCHED      { background: #10b981; }
+.sd-DISCREPANCY  { background: #ef4444; }
+.sd-PARTIAL      { background: #f59e0b; }
+.sd-UNMATCHED    { background: #6b7280; }
+.sd-GRN_ONLY     { background: #3b82f6; }
+.sd-ACCEPTED     { background: #8b5cf6; }
+.sd-DISPUTED     { background: #ec4899; }
+.sd-CREDIT_NOTE  { background: #f97316; }
+.sd-EXCLUDED     { background: #d1d5db; }
+
+/* virtual list spacer */
+.vl-spacer { pointer-events: none; }
+
+/* ── right detail panel ─────────────────────────────────────── */
+.recon-right {
+  background: #fff; border-radius: 12px;
+  box-shadow: 0 1px 4px rgba(0,0,0,.08);
+  overflow: hidden;
+}
+.recon-right-empty {
+  padding: 4rem 2rem; text-align: center; color: #9ca3af; font-size: 13px;
+}
+.recon-detail-head {
+  padding: 14px 18px; border-bottom: 1px solid #e5e7eb;
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+}
+.recon-detail-head h3 { font-size: 15px; font-weight: 700; flex: 1; }
+.recon-detail-body { padding: 16px 18px; }
+
+/* ── detail sections ────────────────────────────────────────── */
+.detail-section { margin-bottom: 18px; }
+.detail-section-title {
+  font-size: 10px; font-weight: 700; text-transform: uppercase;
+  letter-spacing: .6px; color: #9ca3af; margin-bottom: 8px;
+}
+.detail-kv { display: grid; grid-template-columns: 110px 1fr; gap: 4px 8px; font-size: 13px; }
+.detail-k  { color: #6b7280; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .4px; padding-top: 2px; }
+.detail-v  { color: #1a1a2e; font-weight: 500; }
+
+/* ── GRN entries mini-table ─────────────────────────────────── */
+.grn-entries-table { width: 100%; font-size: 12px; border-collapse: collapse; }
+.grn-entries-table th {
+  background: #f8f9fa; padding: 6px 8px; text-align: left;
+  font-size: 10px; font-weight: 700; text-transform: uppercase;
+  letter-spacing: .4px; color: #6b7280; border-bottom: 1px solid #e9ecef;
+}
+.grn-entries-table td { padding: 7px 8px; border-bottom: 1px solid #f3f4f6; }
+.grn-entries-table tr:last-child td { border-bottom: none; }
+.grn-total-row td { font-weight: 700; background: #f8f9fa; border-top: 2px solid #e5e7eb; }
+.grn-diff-row  td { font-size: 11px; }
+.diff-ok   { color: #057a55; font-weight: 700; }
+.diff-warn { color: #92400e; font-weight: 700; }
+.diff-bad  { color: #c81e1e; font-weight: 700; }
+
+/* ── resolution panel ───────────────────────────────────────── */
+.resolution-panel {
+  background: #f8f9fa; border-radius: 8px;
+  padding: 14px; margin-top: 4px;
+}
+.resolution-btns { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 10px; }
+.res-btn {
+  font-size: 11px; padding: 5px 10px; border-radius: 6px;
+  border: 1px solid #d0d0d0; background: #fff; cursor: pointer;
+  font-weight: 600; transition: all .15s; font-family: inherit;
+}
+.res-btn:hover  { background: #f0f0f0; }
+.res-btn.active { color: #fff; border-color: transparent; }
+.res-btn-accept.active   { background: #8b5cf6; }
+.res-btn-cn.active       { background: #f97316; }
+.res-btn-dispute.active  { background: #ec4899; }
+.res-btn-exclude.active  { background: #6b7280; }
+.res-btn-clear.active    { background: #057a55; }
+
+.resolution-note-input {
+  width: 100%; font-size: 12px; padding: 7px 10px;
+  border: 1px solid #d0d0d0; border-radius: 6px;
+  font-family: inherit; resize: vertical; min-height: 52px;
+}
+.resolution-note-input:focus { border-color: #1a56db; outline: none; }
+.resolution-history {
+  font-size: 11px; color: #6b7280; margin-top: 8px;
+  padding: 6px 10px; background: #fff; border-radius: 6px;
+  border: 1px solid #e5e7eb; line-height: 1.6;
+}
+
+/* ── resolution badges ──────────────────────────────────────── */
+.res-badge {
+  font-size: 10px; padding: 2px 8px; border-radius: 10px;
+  font-weight: 700; display: inline-block;
+}
+.res-ACCEPTED    { background: #ede9fe; color: #4c1d95; }
+.res-CREDIT_NOTE { background: #ffedd5; color: #9a3412; }
+.res-DISPUTED    { background: #fce7f3; color: #831843; }
+.res-EXCLUDED    { background: #f3f4f6; color: #374151; }
+
+/* ═══════════════════════════════════════════════════════════════════
+   RECON SUMMARY CARDS (top of GRN tab)
+═══════════════════════════════════════════════════════════════════ */
+.recon-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 8px; margin-bottom: 14px;
+}
+@media (max-width: 900px) { .recon-summary-grid { grid-template-columns: repeat(3,1fr); } }
+.rsc { border-radius: 10px; padding: 10px 12px; cursor: pointer; transition: transform .1s; border: 2px solid transparent; }
+.rsc:hover { transform: translateY(-1px); }
+.rsc.active { border-color: #1a56db; }
+.rsc-num  { font-size: 22px; font-weight: 700; line-height: 1.1; }
+.rsc-lbl  { font-size: 10px; color: #6b7280; margin-top: 2px; font-weight: 600; text-transform: uppercase; letter-spacing: .4px; }
+.rsc-amt  { font-size: 10px; color: #9ca3af; margin-top: 1px; }
+.rsc-action    { background: #fff5f5; }  .rsc-action .rsc-num    { color: #9b1c1c; }
+.rsc-partial   { background: #fff8ed; }  .rsc-partial .rsc-num   { color: #92400e; }
+.rsc-matched   { background: #f0fdf4; }  .rsc-matched .rsc-num   { color: #166534; }
+.rsc-resolved  { background: #f5f3ff; }  .rsc-resolved .rsc-num  { color: #4c1d95; }
+.rsc-grnonly   { background: #f0f9ff; }  .rsc-grnonly .rsc-num   { color: #0c4a6e; }
+.rsc-carried   { background: #fef9c3; }  .rsc-carried .rsc-num   { color: #713f12; }
+.rsc-total     { background: #f8f9fa; }  .rsc-total .rsc-num     { color: #1a1a2e; font-size: 16px; }
+
+/* ═══════════════════════════════════════════════════════════════════
+   CREDIT NOTES SECTION
+═══════════════════════════════════════════════════════════════════ */
+.cn-table { width: 100%; font-size: 12px; border-collapse: collapse; }
+.cn-table th { background: #f8f9fa; padding: 7px 10px; text-align: left; font-size: 10px; font-weight: 700; text-transform: uppercase; color: #6b7280; border-bottom: 2px solid #e9ecef; }
+.cn-table td { padding: 7px 10px; border-bottom: 1px solid #f3f4f6; }
+.cn-table tr:hover td { background: #f9fafb; }
+.cn-add-row { display: grid; grid-template-columns: 1fr 1fr 1fr 1fr 1fr auto; gap: 6px; margin-top: 10px; }
+.cn-add-row input {
+  font-size: 12px; padding: 6px 8px; border: 1px solid #d0d0d0;
+  border-radius: 6px; font-family: inherit;
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+   CARRY FORWARD SECTION
+═══════════════════════════════════════════════════════════════════ */
+.carry-banner {
+  background: #fef9c3; border: 1px solid #fbbf24; border-radius: 10px;
+  padding: 12px 16px; margin-bottom: 12px;
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+}
+.carry-banner strong { font-size: 13px; color: #713f12; }
+
+/* ═══════════════════════════════════════════════════════════════════
+   APPEND PDF BANNER
+═══════════════════════════════════════════════════════════════════ */
+.append-banner {
+  background: #f0fdf4; border: 1px solid #6ee7b7; border-radius: 10px;
+  padding: 12px 16px; margin-bottom: 12px;
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+}
+.append-banner strong { font-size: 13px; color: #064e3b; }
+.append-banner .sub   { font-size: 12px; color: #6b7280; flex: 1; }
+
+/* ═══════════════════════════════════════════════════════════════════
+   STATUS CHANGE INDICATOR
+═══════════════════════════════════════════════════════════════════ */
+.status-changed-badge {
+  font-size: 10px; background: #fef3c7; color: #92400e;
+  border: 1px solid #fcd34d; border-radius: 6px;
+  padding: 2px 6px; font-weight: 600;
+}

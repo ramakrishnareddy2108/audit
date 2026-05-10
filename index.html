@@ -44,6 +44,27 @@
     <input type="file" id="pdf-input" accept=".pdf" style="display:none" onchange="loadPDF(this.files[0])">
   </div>
 
+  <!-- CYCLE BANNER -->
+  <div id="cycle-banner" style="display:none" class="cycle-banner">
+    <span style="font-size:18px">📅</span>
+    <div style="flex:1">
+      <strong id="cycle-banner-title">Active Cycle</strong>
+      <div class="cycle-sub" id="cycle-banner-sub"></div>
+    </div>
+    <input type="text" class="cycle-label-input" id="cycle-label-input"
+      placeholder="Apr 2026" oninput="updateCycleLabel(this.value)" title="Edit cycle label">
+    <button class="btn-sm btn-success" onclick="saveSessionJSON()">💾 Save</button>
+    <button class="btn-sm" onclick="newCyclePrompt()">+ New Cycle</button>
+  </div>
+
+  <!-- APPEND PDF BANNER -->
+  <div id="append-banner" style="display:none" class="append-banner">
+    <span style="font-size:18px">📎</span>
+    <div class="sub" id="append-banner-sub">Active cycle detected — append this PDF?</div>
+    <button class="btn-primary btn-sm" onclick="appendToCycle()">+ Append to Cycle</button>
+    <button class="btn-sm" onclick="discardAppend()">Start fresh</button>
+  </div>
+
   <!-- SESSION BANNER (same PDF detected with saved data) -->
   <div id="session-banner" style="display:none" class="session-banner">
     <span class="session-icon">⏸</span>
@@ -190,8 +211,11 @@
 
     <!-- ═══ GRN & RECONCILIATION TAB ═══ -->
     <div id="pane-grn" style="display:none">
-      <div class="stat-grid" id="stats-grn"></div>
 
+      <!-- Summary cards -->
+      <div class="recon-summary-grid" id="recon-summary-cards"></div>
+
+      <!-- Step 1: GRN upload -->
       <div class="section-title">Step 1 — Upload GRN Excel File(s)</div>
       <div id="grn-upload-zone" class="upload-zone upload-zone-sm"
         onclick="document.getElementById('grn-input').click()"
@@ -206,6 +230,7 @@
       </div>
       <div id="grn-file-list" style="margin-bottom:14px"></div>
 
+      <!-- Step 2: Run -->
       <div class="section-title">Step 2 — Run Reconciliation</div>
       <div class="recon-run-bar">
         <div class="recon-readiness" id="recon-readiness">Upload GRN files and extract invoices to begin</div>
@@ -213,51 +238,76 @@
         <button class="btn-success" id="export-recon-btn" style="display:none" onclick="confirmExportRecon()">⬇ Export Excel</button>
       </div>
 
+      <!-- Carry-forward banner -->
+      <div id="carry-banner" style="display:none" class="carry-banner">
+        <span style="font-size:18px">📦</span>
+        <strong id="carry-banner-text">Open items from previous cycle</strong>
+        <span style="flex:1"></span>
+        <button class="btn-sm" onclick="viewCarriedItems()">View →</button>
+      </div>
+
+      <!-- Step 3: Master-detail results -->
       <div id="recon-results" style="display:none">
-        <div class="recon-stats" id="recon-stat-cards"></div>
-        <div id="recon-diff-alert" style="margin-bottom:12px"></div>
-        <div style="display:flex;gap:8px;align-items:center;margin-bottom:10px;flex-wrap:wrap">
-          <input type="text" id="recon-search" placeholder="Search supplier, invoice, GRN no…"
-            oninput="renderReconTable()" style="flex:1;font-size:13px;padding:7px 12px;border:1px solid #d0d0d0;border-radius:8px">
-          <select id="recon-filter" onchange="renderReconTable()"
-            style="font-size:13px;padding:7px 10px;border:1px solid #d0d0d0;border-radius:8px;background:#fff">
-            <option value="">All statuses</option>
-            <option value="MATCHED">✅ Matched</option>
-            <option value="DISCREPANCY">⚠ Discrepancy</option>
-            <option value="UNMATCHED">❌ Unmatched</option>
-            <option value="GRN ONLY">📋 GRN Only</option>
-          </select>
-          <button class="btn-success btn-sm" onclick="confirmExportRecon()">⬇ Export Excel</button>
+        <div class="recon-master-detail">
+          <!-- LEFT: invoice list -->
+          <div class="recon-left">
+            <div class="recon-left-toolbar">
+              <input type="text" id="recon-search" placeholder="Search vendor, invoice, GRN…"
+                oninput="renderReconList()">
+              <div class="recon-filter-row">
+                <select id="recon-filter" onchange="renderReconList()">
+                  <option value="">All</option>
+                  <option value="ACTION">⚠ Needs Action</option>
+                  <option value="MATCHED">✅ Matched</option>
+                  <option value="DISCREPANCY">❌ Discrepancy</option>
+                  <option value="PARTIAL">🔶 Partial</option>
+                  <option value="UNMATCHED">❌ Unmatched</option>
+                  <option value="GRN_ONLY">📋 GRN Only</option>
+                  <option value="RESOLVED">🔵 Resolved</option>
+                </select>
+                <label class="recon-unresolved-toggle">
+                  <input type="checkbox" id="recon-unresolved-only" onchange="renderReconList()">
+                  Unresolved only
+                </label>
+              </div>
+            </div>
+            <div class="recon-sections" id="recon-sections"></div>
+          </div>
+          <!-- RIGHT: detail panel -->
+          <div class="recon-right" id="recon-detail-panel">
+            <div class="recon-right-empty">
+              <div style="font-size:36px;margin-bottom:8px">←</div>
+              Select an invoice from the list to view details
+            </div>
+          </div>
         </div>
-        <div class="tbl-wrap">
-          <table style="font-size:11px">
-            <thead><tr>
-              <th style="width:110px">Status</th>
-              <th style="width:36px">Pg</th>
-              <th style="width:19%">Inv — Vendor</th>
-              <th style="width:12%">Inv — Invoice</th>
-              <th class="th-r" style="width:9%">Inv — Amt</th>
-              <th style="width:19%">GRN — Supplier</th>
-              <th style="width:12%">GRN — Invoice</th>
-              <th class="th-r" style="width:9%">GRN — Amt</th>
-              <th class="th-r" style="width:8%">Diff</th>
-              <th style="width:10%">GRN No</th>
-              <th style="width:8%">Type</th>
-              <th style="width:8%">Match by</th>
-            </tr></thead>
-            <tbody id="recon-tbody"></tbody>
-          </table>
+      </div>
+
+      <!-- Credit Notes -->
+      <div style="margin-top:20px">
+        <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px">
+          <div class="section-title" style="margin:0">Credit Notes (tracked separately)</div>
+          <button class="btn-sm btn-success" onclick="addCreditNote()">+ Add Credit Note</button>
         </div>
-        <div class="recon-legend">
-          <span style="color:#276221">■ Matched</span> &nbsp;
-          <span style="color:#7D6608">■ Discrepancy</span> &nbsp;
-          <span style="color:#9C0006">■ Not in GRN</span> &nbsp;
-          <span style="color:#1F4E79">■ GRN Only</span>
+        <div id="cn-add-form" style="display:none;margin-bottom:10px">
+          <div class="cn-add-row">
+            <input type="text" id="cn-vendor" placeholder="Vendor name">
+            <input type="text" id="cn-number" placeholder="CN Number">
+            <input type="number" id="cn-amount" placeholder="Amount ₹">
+            <input type="text" id="cn-date" placeholder="Date (DD/MM/YYYY)">
+            <input type="text" id="cn-invoice" placeholder="Against Invoice (optional)">
+            <button class="btn-success btn-sm" onclick="saveCreditNote()">Save</button>
+          </div>
+        </div>
+        <div id="cn-list">
+          <div class="empty-state">No credit notes recorded.</div>
         </div>
       </div>
     </div>
   </div>
 </div><!-- end .wrap -->
+
+
 
 <!-- ZOOM OVERLAY -->
 <div class="zoom-overlay" id="zoom-overlay" style="display:none" onclick="closeZoom()">
