@@ -403,6 +403,36 @@ const Extractor = (() => {
     return inter / (ta.size + tb.size - inter + 1e-9);
   }
 
+  function findMasterInOCR(text, lines) {
+    if (!text) return { matched: null, score: 0, isKnown: false };
+
+    const normText = normMaster(text);
+    let best = null, bestLen = 0;
+    for (const entry of _masterIndex) {
+      if (entry.key.length < 8) continue;
+      if (normText.includes(entry.key) && entry.key.length > bestLen) {
+        best = entry.name;
+        bestLen = entry.key.length;
+      }
+    }
+    if (best) return { matched: best, score: 1.0, isKnown: true };
+
+    // Conservative fuzzy pass for OCR spacing/minor character errors in likely header lines.
+    let fuzzyBest = null, fuzzyScore = 0;
+    for (const line of (lines || []).slice(0, 40)) {
+      const t = line.trim();
+      if (t.length < 6 || /\b(gstin|invoice|bill\s*to|ship\s*to|buyer|consignee|total|amount)\b/i.test(t)) continue;
+      const m = matchToMaster(t);
+      if (m.isKnown && m.score > fuzzyScore) {
+        fuzzyBest = m.matched;
+        fuzzyScore = m.score;
+      }
+    }
+    if (fuzzyBest && fuzzyScore >= 0.82) return { matched: fuzzyBest, score: fuzzyScore, isKnown: true };
+
+    return { matched: null, score: 0, isKnown: false };
+  }
+
   // match raw OCR vendor string against master list
   // returns { matched: canonicalName|null, score, isKnown }
   function matchToMaster(raw) {
@@ -437,7 +467,8 @@ const Extractor = (() => {
     const invoice     = extractInvoiceNo(lines);
     const amount      = extractAmount(text, lines);
     const vendorRaw   = extractVendor(lines);
-    const masterMatch = matchToMaster(vendorRaw);
+    const ocrMasterMatch = findMasterInOCR(text, lines);
+    const masterMatch = ocrMasterMatch.matched ? ocrMasterMatch : matchToMaster(vendorRaw);
     const vendor      = masterMatch.matched || vendorRaw;
     const vendorKnown = masterMatch.isKnown;
     const vendorScore = masterMatch.score;
