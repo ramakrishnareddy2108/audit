@@ -1234,7 +1234,8 @@ function _renderSupplierTableBody(list) {
     }
     const isSelected = _selectedSupplier === s.vendor;
     return `<tr class="sup-tbl-row${isSelected ? ' sup-tbl-selected' : ''}"
-              onclick="showSupplierInsights(${JSON.stringify(s.vendor)})"
+              data-vendor="${esc(s.vendor)}"
+              onclick="showSupplierInsights(this.dataset.vendor)"
               title="Click to view details for ${esc(s.vendor)}">
       <td class="sup-tbl-name">${esc(s.vendor)}</td>
       <td style="text-align:center">${s.invoiceCount}</td>
@@ -1419,10 +1420,12 @@ function showSupplierInsights(vendorName) {
     document.getElementById('sup-grn-only').innerHTML = '';
   }
 
-  // unrecognised vendor warning
+  // unrecognised vendor warning — replace each time, don't stack
+  const existingWarn = document.getElementById('sup-unknown-warn');
+  if (existingWarn) existingWarn.remove();
   if (!matchStr.isKnown) {
     document.getElementById('sup-kpis').insertAdjacentHTML('beforebegin',
-      `<div class="alert alert-warn" style="margin-bottom:12px;font-size:12px">⚠ <strong>"${esc(vendorName)}"</strong> is not in the supplier master list — verify this vendor name is correct.</div>`);
+      `<div id="sup-unknown-warn" class="alert alert-warn" style="margin-bottom:12px;font-size:12px">⚠ <strong>"${esc(vendorName)}"</strong> is not in the supplier master list — verify this vendor name is correct.</div>`);
   }
 }
 
