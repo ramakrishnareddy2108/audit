@@ -450,7 +450,7 @@ const Reconcile = (() => {
     const list = [...map.values()].map(s => ({
       ...s,
       netDiff:    nAmt(s.invoiceTotal - s.grnTotal),
-      actionCount: s.discrepancyCount + s.partialCount + s.unmatchedCount,
+      actionCount: s.discrepancyCount + s.partialCount + s.unmatchedCount + (s.grnOnlyCount || 0),
       matchRate:  s.invoiceCount > 0 ? Math.round(s.matchedCount / s.invoiceCount * 100) : 0
     }));
 

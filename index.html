@@ -315,44 +315,47 @@
           <div style="font-size:15px;font-weight:700">Supplier-wise Audit</div>
           <div style="font-size:12px;color:#6b7280" id="supplier-audit-sub">Run reconciliation to see supplier breakdown</div>
         </div>
-        <input type="text" id="supplier-search" placeholder="Search supplier…"
-          oninput="renderSupplierAudit()" style="font-size:12px;padding:7px 12px;border:1px solid #d0d0d0;border-radius:8px;width:220px">
-        <select id="supplier-sort" onchange="renderSupplierAudit()"
-          style="font-size:12px;padding:7px 10px;border:1px solid #d0d0d0;border-radius:8px;background:#fff">
-          <option value="action">Sort: Needs Action first</option>
-          <option value="total">Sort: Invoice Total ↓</option>
-          <option value="diff">Sort: Variance ↓</option>
-          <option value="name">Sort: Name A–Z</option>
-        </select>
-        <select id="supplier-filter" onchange="renderSupplierAudit()"
-          style="font-size:12px;padding:7px 10px;border:1px solid #d0d0d0;border-radius:8px;background:#fff">
-          <option value="">All suppliers</option>
-          <option value="action">Has issues</option>
-          <option value="clean">All matched</option>
-          <option value="unknown">Unrecognised</option>
-        </select>
       </div>
 
-      <!-- bar chart: top suppliers by invoice value -->
-      <div id="supplier-chart-wrap" style="display:none;margin-bottom:18px">
-        <div style="font-size:12px;font-weight:600;color:#374151;margin-bottom:8px">Top 12 Suppliers by Invoice Value</div>
-        <div id="supplier-chart"></div>
-      </div>
-
-      <!-- supplier cards grid -->
-      <div id="supplier-cards" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:12px">
-        <div class="empty-state">Run reconciliation first to see supplier audit.</div>
-      </div>
-
-      <!-- supplier drill-down panel -->
-      <div id="supplier-drilldown" style="display:none;margin-top:20px">
-        <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px">
-          <div style="font-size:14px;font-weight:700" id="supplier-drilldown-title">Supplier Details</div>
-          <span style="flex:1"></span>
-          <button class="btn-sm" onclick="closeSupplierDrilldown()">✕ Close</button>
+      <!-- supplier selector row -->
+      <div class="sup-selector-row">
+        <div class="sup-selector-wrap">
+          <label class="sup-selector-label">Select Supplier</label>
+          <div style="display:flex;gap:8px;align-items:center">
+            <select id="supplier-select" onchange="showSupplierInsights(this.value)"
+              class="sup-select">
+              <option value="">— choose a supplier —</option>
+            </select>
+            <input type="text" id="supplier-search" placeholder="🔍 Search…"
+              oninput="filterSupplierDropdown(this.value)"
+              class="sup-search-input">
+          </div>
         </div>
-        <div id="supplier-drilldown-body"></div>
       </div>
+
+      <!-- insights panel (hidden until supplier chosen) -->
+      <div id="supplier-insights" style="display:none;margin-top:18px">
+
+        <!-- KPI summary bar -->
+        <div id="sup-kpis" class="sup-kpi-bar"></div>
+
+        <!-- action guidance -->
+        <div id="sup-action-box"></div>
+
+        <!-- breakdown chips -->
+        <div id="sup-breakdown-chips" class="sup-chips-row"></div>
+
+        <!-- invoice lines table -->
+        <div id="sup-invoice-table"></div>
+
+        <!-- GRN-only section -->
+        <div id="sup-grn-only"></div>
+
+      </div>
+
+      <!-- empty state when no reconciliation run -->
+      <div id="supplier-empty" class="empty-state" style="margin-top:24px">Run reconciliation first to see supplier audit.</div>
+
     </div>
 
   </div>

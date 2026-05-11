@@ -1129,223 +1129,224 @@ let _supplierStats = [];   // cached supplier stats array
 let _selectedSupplier = null;
 
 function renderSupplierAudit() {
+  const emptyEl    = document.getElementById('supplier-empty');
+  const insightsEl = document.getElementById('supplier-insights');
+  const selectEl   = document.getElementById('supplier-select');
+
   if (!reconRows.length) {
-    document.getElementById('supplier-cards').innerHTML = '<div class="empty-state">Run reconciliation first to see supplier audit.</div>';
-    document.getElementById('supplier-chart-wrap').style.display = 'none';
+    emptyEl.style.display = 'block';
+    insightsEl.style.display = 'none';
+    document.querySelector('.sup-selector-row').style.display = 'none';
     return;
   }
 
   _supplierStats = Reconcile.getSupplierStats(reconRows, grnOnlyRows);
 
-  // apply search/sort/filter
-  const q      = (document.getElementById('supplier-search')?.value || '').toLowerCase();
-  const sortBy = document.getElementById('supplier-sort')?.value || 'action';
-  const filt   = document.getElementById('supplier-filter')?.value || '';
-
-  let list = _supplierStats;
-  if (q)   list = list.filter(s => s.vendor.toLowerCase().includes(q));
-  if (filt === 'action')  list = list.filter(s => s.actionCount > 0);
-  if (filt === 'clean')   list = list.filter(s => s.actionCount === 0 && s.invoiceCount > 0);
-  if (filt === 'unknown') list = list.filter(s => {
-    // check if vendor is in master list
-    const match = Extractor.matchToMaster(s.vendor);
-    return !match.isKnown;
-  });
-
-  if (sortBy === 'total') list = [...list].sort((a,b) => b.invoiceTotal - a.invoiceTotal);
-  if (sortBy === 'diff')  list = [...list].sort((a,b) => Math.abs(b.netDiff) - Math.abs(a.netDiff));
-  if (sortBy === 'name')  list = [...list].sort((a,b) => a.vendor.localeCompare(b.vendor));
-  // default 'action': already sorted by actionCount then total
-
-  // update subtitle
-  const totalSuppliers = _supplierStats.length;
+  const totalSuppliers   = _supplierStats.length;
   const suppliersWithIssues = _supplierStats.filter(s => s.actionCount > 0).length;
   document.getElementById('supplier-audit-sub').textContent =
-    `${totalSuppliers} suppliers · ${suppliersWithIssues} with issues · showing ${list.length}`;
+    `${totalSuppliers} suppliers · ${suppliersWithIssues} with issues`;
 
-  // render bar chart (top 12 by invoice total)
-  renderSupplierChart(_supplierStats);
+  emptyEl.style.display = 'none';
+  document.querySelector('.sup-selector-row').style.display = 'block';
 
-  // render cards
-  if (!list.length) {
-    document.getElementById('supplier-cards').innerHTML = '<div class="empty-state">No suppliers match filter.</div>';
-    return;
+  // populate dropdown sorted: action-first then name
+  const prev = selectEl.value;
+  selectEl.innerHTML = '<option value="">— choose a supplier —</option>' +
+    _supplierStats.map(s => {
+      const badge = s.actionCount > 0 ? ` ⚠ (${s.actionCount})` : s.invoiceCount > 0 ? ' ✓' : '';
+      return `<option value="${esc(s.vendor)}">${esc(s.vendor)}${badge}</option>`;
+    }).join('');
+
+  // restore previous selection if still valid
+  if (prev && _supplierStats.find(s => s.vendor === prev)) {
+    selectEl.value = prev;
+    showSupplierInsights(prev);
+  } else {
+    insightsEl.style.display = 'none';
   }
-  document.getElementById('supplier-cards').innerHTML = list.map(s => supplierCardHTML(s)).join('');
 }
 
-function supplierCardHTML(s) {
-  const total = s.invoiceCount || 1;
-  const matchPct   = Math.round(s.matchedCount   / total * 100);
-  const discPct    = Math.round(s.discrepancyCount / total * 100);
-  const partialPct = Math.round(s.partialCount    / total * 100);
-  const unmatchPct = Math.round(s.unmatchedCount  / total * 100);
-  const resolvedPct= Math.round(s.resolvedCount   / total * 100);
-
-  const hasAction = s.actionCount > 0;
-  const allClean  = !hasAction && s.invoiceCount > 0;
-  const hasPartial = s.partialCount > 0 && s.discrepancyCount === 0 && s.unmatchedCount === 0;
-  const diffAbs   = Math.abs(s.netDiff);
-  const diffCls   = diffAbs === 0 ? 'sup-diff-ok' : diffAbs <= 500 ? 'sup-diff-warn' : 'sup-diff-bad';
-  const diffStr   = diffAbs === 0 ? '✓ Exact' : (s.netDiff > 0 ? '+' : '') + fmtINR(s.netDiff);
-  const badgeCls  = hasAction ? 'sup-badge-action' : allClean ? 'sup-badge-clean' : 'sup-badge-partial';
-  const badgeTxt  = hasAction ? `⚠ ${s.actionCount} issues` : allClean ? '✅ All clear' : '🔶 Partial';
-  const cardCls   = hasAction ? 'has-action' : allClean ? 'all-clean' : hasPartial ? 'has-partial' : '';
-  const matchStr  = Extractor.matchToMaster(s.vendor);
-  const unknownBadge = !matchStr.isKnown ? '<span class="sup-card-badge sup-badge-unknown" title="Not in supplier master list">⚠ Unrecognised</span>' : '';
-
-  return `<div class="sup-card ${cardCls}" onclick="openSupplierDrilldown(${JSON.stringify(s.vendor)})">
-    <div class="sup-card-header">
-      <div>
-        <div class="sup-card-name">${esc(s.vendor)}</div>
-        ${unknownBadge}
-      </div>
-      <span class="sup-card-badge ${badgeCls}">${badgeTxt}</span>
-    </div>
-    <div class="sup-progress-wrap">
-      <div class="sup-progress-bar" title="Green=Matched · Red=Discrepancy · Orange=Partial · Gray=Unmatched · Purple=Resolved">
-        <div class="sup-prog-matched"   style="width:${matchPct}%"></div>
-        <div class="sup-prog-disc"      style="width:${discPct}%"></div>
-        <div class="sup-prog-partial"   style="width:${partialPct}%"></div>
-        <div class="sup-prog-unmatched" style="width:${unmatchPct}%"></div>
-        <div class="sup-prog-resolved"  style="width:${resolvedPct}%"></div>
-      </div>
-    </div>
-    <div class="sup-stats-row">
-      <div class="sup-stat"><span class="sup-stat-num">${s.invoiceCount}</span><span class="sup-stat-lbl">Invoices</span></div>
-      <div class="sup-stat"><span class="sup-stat-num" style="color:#10b981">${s.matchedCount}</span><span class="sup-stat-lbl">Matched</span></div>
-      ${s.discrepancyCount  ? `<div class="sup-stat"><span class="sup-stat-num" style="color:#ef4444">${s.discrepancyCount}</span><span class="sup-stat-lbl">Discrepancy</span></div>` : ''}
-      ${s.partialCount      ? `<div class="sup-stat"><span class="sup-stat-num" style="color:#f59e0b">${s.partialCount}</span><span class="sup-stat-lbl">Partial</span></div>` : ''}
-      ${s.unmatchedCount    ? `<div class="sup-stat"><span class="sup-stat-num" style="color:#6b7280">${s.unmatchedCount}</span><span class="sup-stat-lbl">Unmatched</span></div>` : ''}
-      ${s.resolvedCount     ? `<div class="sup-stat"><span class="sup-stat-num" style="color:#8b5cf6">${s.resolvedCount}</span><span class="sup-stat-lbl">Resolved</span></div>` : ''}
-      <div class="sup-stat"><span class="sup-stat-num">${matchPct}%</span><span class="sup-stat-lbl">Match rate</span></div>
-    </div>
-    <div class="sup-amounts">
-      <span>Invoice: <strong>${fmtINR(s.invoiceTotal)}</strong></span>
-      <span>GRN: <strong>${fmtINR(s.grnTotal)}</strong></span>
-      <span class="${diffCls}">${diffStr}</span>
-    </div>
-  </div>`;
+function filterSupplierDropdown(q) {
+  const lq  = (q || '').toLowerCase();
+  const sel = document.getElementById('supplier-select');
+  Array.from(sel.options).forEach(opt => {
+    opt.style.display = (!lq || opt.value === '' || opt.text.toLowerCase().includes(lq)) ? '' : 'none';
+  });
 }
 
-function renderSupplierChart(list) {
-  const wrap = document.getElementById('supplier-chart-wrap');
-  const el   = document.getElementById('supplier-chart');
-  if (!list.length) { wrap.style.display = 'none'; return; }
-  wrap.style.display = 'block';
+function showSupplierInsights(vendorName) {
+  const insightsEl = document.getElementById('supplier-insights');
+  if (!vendorName) { insightsEl.style.display = 'none'; return; }
 
-  // top 12 by invoice total
-  const top = [...list].sort((a,b) => b.invoiceTotal - a.invoiceTotal).slice(0, 12);
-  const maxVal = top[0]?.invoiceTotal || 1;
-
-  el.innerHTML = top.map(s => {
-    const total    = s.invoiceCount || 1;
-    const matchW   = Math.round(s.matchedCount    / total * 100);
-    const discW    = Math.round(s.discrepancyCount / total * 100);
-    const partialW = Math.round(s.partialCount     / total * 100);
-    const unmatchW = Math.round(s.unmatchedCount   / total * 100);
-    const resolvedW= Math.round(s.resolvedCount    / total * 100);
-    const diffAbs  = Math.abs(s.netDiff);
-    const diffCls  = diffAbs === 0 ? 'sup-diff-ok' : diffAbs <= 500 ? 'sup-diff-warn' : 'sup-diff-bad';
-    const diffTxt  = diffAbs === 0 ? '✓' : (s.netDiff > 0 ? '+' : '') + fmtINR(s.netDiff);
-
-    return `<div class="sup-bar-row" onclick="openSupplierDrilldown(${JSON.stringify(s.vendor)})" style="cursor:pointer">
-      <div class="sup-bar-label" title="${esc(s.vendor)}">${esc(s.vendor)}</div>
-      <div class="sup-bar-track" title="Invoice: ${fmtINR(s.invoiceTotal)} | Matched: ${s.matchedCount} | Issues: ${s.actionCount}">
-        <div class="sup-bar-fill-matched"   style="width:${matchW}%"></div>
-        <div class="sup-bar-fill-disc"      style="width:${discW}%"></div>
-        <div class="sup-bar-fill-partial"   style="width:${partialW}%"></div>
-        <div class="sup-bar-fill-unmatched" style="width:${unmatchW}%"></div>
-        <div class="sup-bar-fill-resolved"  style="width:${resolvedW}%"></div>
-      </div>
-      <div class="sup-bar-val">
-        <span>${fmtINR(s.invoiceTotal)}</span>
-        <span class="${diffCls}" style="margin-left:4px;font-size:9px">${diffTxt}</span>
-      </div>
-    </div>`;
-  }).join('');
-}
-
-// ── Supplier drill-down ───────────────────────────────────────────
-function openSupplierDrilldown(vendorName) {
-  _selectedSupplier = vendorName;
   const s = _supplierStats.find(x => x.vendor === vendorName);
-  if (!s) return;
+  if (!s) { insightsEl.style.display = 'none'; return; }
 
-  const panel = document.getElementById('supplier-drilldown');
-  panel.style.display = 'block';
-  document.getElementById('supplier-drilldown-title').textContent = vendorName;
-  panel.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  insightsEl.style.display = 'block';
 
-  const rows = s.rows || [];
-  const diffAbs = Math.abs(s.netDiff);
-  const diffCls = diffAbs === 0 ? 'sup-diff-ok' : diffAbs <= 500 ? 'sup-diff-warn' : 'sup-diff-bad';
-  const matchStr = Extractor.matchToMaster(vendorName);
+  const diffAbs   = Math.abs(s.netDiff);
+  const matchStr  = Extractor.matchToMaster(vendorName);
+  const grnOnly   = (grnOnlyRows || []).filter(g => (g.supplier || 'Unknown') === vendorName);
 
-  document.getElementById('supplier-drilldown-body').innerHTML = `
-    <!-- KPI bar -->
-    <div class="sup-summary-kpis">
-      <div class="stat-card"><div class="stat-num">${s.invoiceCount}</div><div class="stat-lbl">Total Invoices</div></div>
-      <div class="stat-card"><div class="stat-num" style="color:#10b981">${s.matchedCount}</div><div class="stat-lbl">Matched</div></div>
-      <div class="stat-card" style="${s.actionCount > 0 ? 'border:1px solid #fca5a5' : ''}">
-        <div class="stat-num" style="color:${s.actionCount > 0 ? '#c81e1e' : '#1a1a2e'}">${s.actionCount}</div>
-        <div class="stat-lbl">Needs Action</div>
-      </div>
-      <div class="stat-card"><div class="stat-num" style="font-size:15px">${fmtINR(s.invoiceTotal)}</div><div class="stat-lbl">Invoice Total</div></div>
-      <div class="stat-card"><div class="stat-num ${diffCls}" style="font-size:15px">${diffAbs === 0 ? '✓ Exact' : fmtINR(s.netDiff)}</div><div class="stat-lbl">Net Variance</div></div>
+  // ── KPI bar ──────────────────────────────────────────────────────
+  const balCls = diffAbs === 0 ? 'sup-kpi-ok' : s.netDiff > 0 ? 'sup-kpi-warn' : 'sup-kpi-bad';
+  const balLbl = diffAbs === 0 ? 'Balanced' : s.netDiff > 0 ? 'Inv > GRN' : 'GRN > Inv';
+  const matchPct = s.invoiceCount > 0 ? Math.round(s.matchedCount / s.invoiceCount * 100) : 0;
+
+  document.getElementById('sup-kpis').innerHTML = `
+    <div class="sup-kpi-card">
+      <div class="sup-kpi-num">${s.invoiceCount}</div>
+      <div class="sup-kpi-lbl">Invoices</div>
     </div>
-    ${!matchStr.isKnown ? `<div class="alert alert-warn" style="margin-bottom:12px;font-size:12px">⚠ <strong>"${esc(vendorName)}"</strong> is not in the supplier master list — verify this vendor name is correct.</div>` : ''}
-    <!-- Invoice table -->
+    <div class="sup-kpi-card">
+      <div class="sup-kpi-num">${fmtINR(s.invoiceTotal)}</div>
+      <div class="sup-kpi-lbl">Invoice Total</div>
+    </div>
+    <div class="sup-kpi-card">
+      <div class="sup-kpi-num">${fmtINR(s.grnTotal)}</div>
+      <div class="sup-kpi-lbl">GRN Total</div>
+    </div>
+    <div class="sup-kpi-card ${balCls}">
+      <div class="sup-kpi-num">${diffAbs === 0 ? '✓ 0' : (s.netDiff > 0 ? '+' : '') + fmtINR(s.netDiff)}</div>
+      <div class="sup-kpi-lbl">${balLbl}</div>
+    </div>
+    <div class="sup-kpi-card">
+      <div class="sup-kpi-num">${matchPct}%</div>
+      <div class="sup-kpi-lbl">Match Rate</div>
+    </div>`;
+
+  // ── Action guidance ───────────────────────────────────────────────
+  const actions = [];
+  if (s.discrepancyCount > 0)
+    actions.push({ cls:'sup-action-disc',   icon:'❌', text:`GRN exceeds invoice on <strong>${s.discrepancyCount}</strong> bill${s.discrepancyCount>1?'s':''}. <strong>Request invoice from vendor</strong> for the excess amount.` });
+  if (s.partialCount > 0)
+    actions.push({ cls:'sup-action-partial', icon:'⚠', text:`GRN is short on <strong>${s.partialCount}</strong> bill${s.partialCount>1?'s':''}. <strong>Create GRNs</strong> to cover the remaining balance and clear the pending bills.` });
+  if (s.unmatchedCount > 0)
+    actions.push({ cls:'sup-action-unmatched', icon:'◎', text:`<strong>${s.unmatchedCount}</strong> invoice${s.unmatchedCount>1?'s have':' has'} no matching GRN. <strong>Create GRNs</strong> to clear these bills.` });
+  if (grnOnly.length > 0)
+    actions.push({ cls:'sup-action-disc', icon:'📦', text:`<strong>${grnOnly.length}</strong> GRN entr${grnOnly.length>1?'ies':'y'} received with no matching invoice. <strong>Request invoice from vendor.</strong>` });
+
+  if (!actions.length) {
+    document.getElementById('sup-action-box').innerHTML =
+      `<div class="sup-action-ok">✅ All invoices matched — no action required for this supplier.</div>`;
+  } else {
+    document.getElementById('sup-action-box').innerHTML =
+      `<div class="sup-action-list">${actions.map(a =>
+        `<div class="sup-action-item ${a.cls}"><span class="sup-action-icon">${a.icon}</span><span>${a.text}</span></div>`
+      ).join('')}</div>`;
+  }
+
+  // ── Breakdown chips ───────────────────────────────────────────────
+  const chips = [];
+  if (s.matchedCount)     chips.push(`<span class="sup-chip sup-chip-matched">✅ Matched: ${s.matchedCount}</span>`);
+  if (s.partialCount)     chips.push(`<span class="sup-chip sup-chip-partial">⚠ GRN Short: ${s.partialCount}</span>`);
+  if (s.discrepancyCount) chips.push(`<span class="sup-chip sup-chip-disc">❌ Excess GRN: ${s.discrepancyCount}</span>`);
+  if (s.unmatchedCount)   chips.push(`<span class="sup-chip sup-chip-unmatched">◎ No GRN: ${s.unmatchedCount}</span>`);
+  if (s.resolvedCount)    chips.push(`<span class="sup-chip sup-chip-resolved">✓ Resolved: ${s.resolvedCount}</span>`);
+  if (grnOnly.length)     chips.push(`<span class="sup-chip sup-chip-disc">📦 GRN-only: ${grnOnly.length}</span>`);
+  document.getElementById('sup-breakdown-chips').innerHTML = chips.join('');
+
+  // ── Invoice lines table ───────────────────────────────────────────
+  const rows = s.rows || [];
+  const statusMeta = {
+    MATCHED:     { label: '✅ Matched',      cls: 'si-matched',   action: '—' },
+    PARTIAL:     { label: '⚠ GRN Short',    cls: 'si-partial',   action: 'Create GRN for balance' },
+    DISCREPANCY: { label: '❌ Excess GRN',   cls: 'si-disc',      action: 'Request invoice from vendor' },
+    UNMATCHED:   { label: '◎ No GRN',       cls: 'si-unmatched', action: 'Create GRN' },
+  };
+
+  document.getElementById('sup-invoice-table').innerHTML = `
+    <div class="sup-section-title">Invoice Lines</div>
     <div class="tbl-wrap">
       <table class="sup-drilldown-table">
         <thead><tr>
-          <th style="width:40px">Page</th>
-          <th style="width:16%">Invoice No</th>
-          <th style="width:12%">Date</th>
-          <th style="width:12%;text-align:right">Inv Amount</th>
-          <th style="width:8%">GRNs</th>
-          <th style="width:12%;text-align:right">GRN Total</th>
-          <th style="width:10%;text-align:right">Diff</th>
-          <th style="width:100px">Status</th>
-          <th style="width:80px">Resolution</th>
+          <th>Invoice No</th>
+          <th>Date</th>
+          <th style="text-align:right">Inv Amount</th>
+          <th style="text-align:right">GRN Total</th>
+          <th style="text-align:right">Difference</th>
+          <th>Status</th>
+          <th>Action Required</th>
         </tr></thead>
         <tbody>
           ${rows.map(r => {
-            const diff     = r.amountDiff || 0;
-            const diffCls  = Math.abs(diff) <= 100 ? 'diff-ok' : Math.abs(diff) <= 500 ? 'diff-warn' : 'diff-bad';
-            const statusClr= {MATCHED:'#057a55',DISCREPANCY:'#c81e1e',PARTIAL:'#d97706',UNMATCHED:'#6b7280'}[r.status]||'#6b7280';
-            const resBadge = r.resolution ? `<span class="res-badge res-${r.resolution}" style="font-size:9px">${r.resolution.replace('_',' ')}</span>` : '';
-            return `<tr onclick="switchTab('grn');selectReconRow(${JSON.stringify(r.invoiceKey||'')},false)" title="Click to view in reconciliation">
-              <td class="td-muted">${r.page||'—'}</td>
+            const diff    = r.amountDiff || 0;
+            const diffAbs = Math.abs(diff);
+            const diffCls = diffAbs <= 100 ? 'diff-ok' : diffAbs <= 500 ? 'diff-warn' : 'diff-bad';
+            let meta;
+            if (r.resolution && ['ACCEPTED','EXCLUDED','DISPUTED','CREDIT_NOTE'].includes(r.resolution)) {
+              meta = { label: `✓ Resolved (${r.resolution.replace('_',' ')})`, cls: 'si-resolved', action: '—' };
+            } else {
+              meta = statusMeta[r.status] || { label: r.status, cls: '', action: '—' };
+            }
+            return `<tr onclick="switchTab('grn');selectReconRow(${JSON.stringify(r.invoiceKey||'')},false)" title="Click to view in reconciliation tab">
               <td>${esc(r.invInvoice||'—')}</td>
-              <td>${esc(r.invDate||'—')}</td>
+              <td class="td-muted">${esc(r.invDate||'—')}</td>
               <td style="text-align:right;font-weight:600">${fmtINR(r.invAmount||0)}</td>
-              <td style="text-align:center">${(r.grnEntries||[]).length}</td>
               <td style="text-align:right">${r.grnTotal ? fmtINR(r.grnTotal) : '—'}</td>
               <td style="text-align:right" class="${diffCls}">${diff !== 0 ? (diff > 0 ? '+' : '') + fmtINR(diff) : '✓'}</td>
-              <td><span style="font-size:11px;font-weight:600;color:${statusClr}">${r.status}</span></td>
-              <td>${resBadge||'—'}</td>
+              <td><span class="si-status ${meta.cls}">${meta.label}</span></td>
+              <td class="si-action-hint">${meta.action}</td>
             </tr>`;
           }).join('')}
         </tbody>
         <tfoot>
-          <tr style="background:#f8f9fa;font-weight:700">
-            <td colspan="3" style="padding:8px 10px;font-size:12px">Total (${rows.length} invoices)</td>
-            <td style="text-align:right;padding:8px 10px">${fmtINR(s.invoiceTotal)}</td>
-            <td></td>
-            <td style="text-align:right;padding:8px 10px">${fmtINR(s.grnTotal)}</td>
-            <td style="text-align:right;padding:8px 10px" class="${diffCls}">${diffAbs === 0 ? '✓' : (s.netDiff > 0 ? '+' : '') + fmtINR(s.netDiff)}</td>
+          <tr class="sup-tfoot">
+            <td colspan="2">Total (${rows.length} invoice${rows.length!==1?'s':''})</td>
+            <td style="text-align:right">${fmtINR(s.invoiceTotal)}</td>
+            <td style="text-align:right">${fmtINR(s.grnTotal)}</td>
+            <td style="text-align:right" class="${diffAbs===0?'diff-ok':diffAbs<=500?'diff-warn':'diff-bad'}">${diffAbs===0?'✓':(s.netDiff>0?'+':'')+fmtINR(s.netDiff)}</td>
             <td colspan="2"></td>
           </tr>
         </tfoot>
       </table>
     </div>`;
+
+  // ── GRN-only section ──────────────────────────────────────────────
+  if (grnOnly.length) {
+    document.getElementById('sup-grn-only').innerHTML = `
+      <div class="sup-section-title" style="margin-top:18px">GRN-Only Entries <span class="sup-section-note">(GRN received — no matching invoice found)</span></div>
+      <div class="tbl-wrap">
+        <table class="sup-drilldown-table">
+          <thead><tr>
+            <th>GRN Ref / Details</th>
+            <th>Vendor (GRN)</th>
+            <th style="text-align:right">Amount</th>
+            <th>Action Required</th>
+          </tr></thead>
+          <tbody>
+            ${grnOnly.map(g => `<tr>
+              <td>${esc(g.invoice||g.ref||'—')}</td>
+              <td>${esc(g.supplier||'—')}</td>
+              <td style="text-align:right;font-weight:600">${fmtINR(g.amount||0)}</td>
+              <td class="si-action-hint">Request invoice from vendor</td>
+            </tr>`).join('')}
+          </tbody>
+        </table>
+      </div>`;
+  } else {
+    document.getElementById('sup-grn-only').innerHTML = '';
+  }
+
+  // unrecognised vendor warning
+  if (!matchStr.isKnown) {
+    document.getElementById('sup-kpis').insertAdjacentHTML('beforebegin',
+      `<div class="alert alert-warn" style="margin-bottom:12px;font-size:12px">⚠ <strong>"${esc(vendorName)}"</strong> is not in the supplier master list — verify this vendor name is correct.</div>`);
+  }
+}
+
+function openSupplierDrilldown(vendorName) {
+  // legacy compatibility: select vendor in dropdown and show insights
+  const sel = document.getElementById('supplier-select');
+  if (sel) { sel.value = vendorName; showSupplierInsights(vendorName); }
 }
 
 function closeSupplierDrilldown() {
-  document.getElementById('supplier-drilldown').style.display = 'none';
-  _selectedSupplier = null;
+  document.getElementById('supplier-insights').style.display = 'none';
+  const sel = document.getElementById('supplier-select');
+  if (sel) sel.value = '';
 }
+
 
 // hook into switchTab to auto-render supplier audit
 const _origSwitchTab = switchTab;
