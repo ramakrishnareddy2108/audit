@@ -147,6 +147,8 @@ button:disabled { opacity: .4; cursor: not-allowed; }
 .nav-bar { display: flex; align-items: center; gap: 10px; margin-bottom: 14px; flex-wrap: wrap; }
 .page-info { font-size: 13px; color: #6b7280; }
 .key-hint { font-size: 11px; color: #9ca3af; }
+.nav-filter-btn { border-color: #d1d5db; }
+.nav-filter-btn.active { background: #fef3c7; border-color: #f59e0b; color: #92400e; font-weight: 600; }
 
 .panel { background: #fff; border-radius: 12px; overflow: hidden; box-shadow: 0 1px 4px rgba(0,0,0,.08); }
 .panel-head {
@@ -449,6 +451,14 @@ tr.selected td { background: #eff6ff; }
 .sd-DISPUTED     { background: #ec4899; }
 .sd-CREDIT_NOTE  { background: #f97316; }
 .sd-EXCLUDED     { background: #d1d5db; }
+.sd-DUPLICATE    { background: #f59e0b; }
+
+/* Revised / duplicate invoice badges and warning panel */
+.dup-badge         { background: #fef3c7; color: #92400e; font-size: 9px; padding: 1px 5px; border-radius: 3px; border: 1px solid #f59e0b; font-weight: 600; }
+.dup-badge.has-dup { background: #fff7ed; color: #c2410c; border-color: #fb923c; }
+.dup-warning       { background: #fef3c7; border: 1px solid #f59e0b; border-radius: 6px; padding: 10px 14px; margin: 12px 12px 0; font-size: 12px; line-height: 1.5; }
+.dup-warning a     { color: #92400e; font-weight: 600; }
+.shr-duplicate     { border-left: 3px solid #f59e0b; }
 
 /* virtual list spacer */
 .vl-spacer { pointer-events: none; }

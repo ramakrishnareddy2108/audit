@@ -7,6 +7,7 @@ let cycle       = null;   // v4 cycle object (single source of truth)
 let activePdfName  = '';  // currently loaded PDF filename
 let activePdfAB    = null;// loaded PDF ArrayBuffer (for appending)
 let curPage     = 1;
+let navMode     = 'all';  // 'all' | 'review'
 let activeTab   = 'viewer';
 let processing  = false;
 let abortFlag   = false;
@@ -462,7 +463,22 @@ function curPageKey() { return `${activePdfName}::${curPage}`; }
 async function renderViewer() {
   const key=curPageKey();
   const r=cycle?.pages?.[key];
-  document.getElementById('page-info').textContent=`Page ${curPage}`;
+  // nav mode: update toggle button and page-info counter
+  const navBtn=document.getElementById('nav-filter-btn');
+  if(navBtn){
+    const isReview=navMode==='review';
+    navBtn.textContent=isReview?'Needs Review':'All pages';
+    navBtn.classList.toggle('active',isReview);
+    if(isReview&&cycle?.pages){
+      const reviewPgs=sortedPageKeys().map(k=>cycle.pages[k]).filter(p=>p.sourcePdf===activePdfName&&(p.status==='review'||p.status==='error'));
+      const pos=reviewPgs.findIndex(p=>p.page===curPage)+1;
+      document.getElementById('page-info').textContent=`Page ${curPage}${pos>0?` · ${pos}/${reviewPgs.length} review`:''}`;
+    } else {
+      document.getElementById('page-info').textContent=`Page ${curPage}`;
+    }
+  } else {
+    document.getElementById('page-info').textContent=`Page ${curPage}`;
+  }
   document.getElementById('img-panel-title').textContent=`Page ${curPage}`;
   document.getElementById('status-badge').innerHTML=r?badgeHTML(r.status):'';
   document.getElementById('confidence-badge').textContent=r?.status==='ok'&&r.confidence?`confidence: ${r.confidence}`:'';
@@ -503,13 +519,20 @@ async function renderViewer() {
 }
 
 function navigate(dir) {
-  const pgs=sortedPageKeys().map(k=>cycle.pages[k]).filter(p=>p.sourcePdf===activePdfName);
+  const allPgs=sortedPageKeys().map(k=>cycle.pages[k]).filter(p=>p.sourcePdf===activePdfName);
+  const pgs=navMode==='review'?allPgs.filter(p=>p.status==='review'||p.status==='error'):allPgs;
   const idx=pgs.findIndex(p=>p.page===curPage);
   const nxt=pgs[idx+dir];
   if(nxt){curPage=nxt.page;renderViewer();}
 }
 
+function toggleNavMode() {
+  navMode=navMode==='all'?'review':'all';
+  renderViewer();
+}
+
 function jumpToReview() {
+  navMode='review';
   const pg=Object.values(cycle?.pages||{}).find(p=>p.sourcePdf===activePdfName&&(p.status==='error'||p.status==='review'));
   if(pg){curPage=pg.page;switchTab('viewer');renderViewer();}
 }
@@ -772,6 +795,7 @@ function buildVLSections(){
 
   const filter=r=>{
     if(unresolvedOnly&&['ACCEPTED','EXCLUDED'].includes(r.resolution)) return false;
+    if(unresolvedOnly&&r.isDuplicate) return false;
     if(q&&!JSON.stringify(r).toLowerCase().includes(q)) return false;
     if(!filt) return true;
     if(filt==='ACTION')   return Reconcile.needsAction(r);
@@ -796,6 +820,11 @@ function buildVLSections(){
   const resolved=reconRows.filter(r=>['ACCEPTED','DISPUTED','CREDIT_NOTE','EXCLUDED'].includes(r.resolution)&&filter(r));
   if(resolved.length||filt==='RESOLVED')
     vlSections.push({key:'resolved',label:'🔵 Resolved',cls:'shr-resolved',items:resolved,collapsed:reconSectionState.resolved!==false});
+
+  // Revised (duplicate invoice numbers — auto-excluded from totals)
+  const duplicates=reconRows.filter(r=>r.isDuplicate&&filter(r));
+  if(duplicates.length||filt==='DUPLICATE')
+    vlSections.push({key:'duplicates',label:`🔄 Revised Invoices`,cls:'shr-duplicate',items:duplicates,collapsed:reconSectionState.duplicates!==false});
 
   // GRN Only
   const grnOnly=grnOnlyRows.filter(g=>{
@@ -834,7 +863,7 @@ function renderReconList(){
         const key=r.invoiceKey||r._id||'';
         const active=key===selectedReconKey;
         const statusKey=r.resolution||r.status;
-        const dotCls=`sd-${isGrnOnly?'GRN_ONLY':r.resolution?r.resolution:r.status}`;
+        const dotCls=`sd-${isGrnOnly?'GRN_ONLY':r.isDuplicate?'DUPLICATE':r.resolution?r.resolution:r.status}`;
         const diff=r.amountDiff;
         const diffStr=diff!==undefined&&diff!==0?(diff>0?`+${fmtINR(diff)}`:fmtINR(diff)):'';
         const diffCls=diff>0?'neg':diff<0?'pos':'';
@@ -849,6 +878,8 @@ function renderReconList(){
                 ${isGrnOnly?'<span style="color:#3b82f6">GRN only</span>':''}
                 ${isCarried?`<span style="color:#92400e">from ${esc(r._carryFrom)}</span>`:''}
                 ${r.grnEntries?.length>1?`<span>${r.grnEntries.length} GRNs</span>`:''}
+                ${r.isDuplicate?`<span class="dup-badge">REVISED COPY</span>`:''}
+                ${r.hasDuplicates?`<span class="dup-badge has-dup">HAS REVISION</span>`:''}
                 ${r.resolution?`<span class="res-badge res-${r.resolution}" style="font-size:9px">${r.resolution}</span>`:''}
                 ${r.previousStatus?`<span class="status-changed-badge">changed</span>`:''}
               </div>
@@ -941,7 +972,23 @@ function renderReconDetail(r){
   const resHistHTML=r.previousStatus?`<div class="resolution-history">⚡ Status changed: <strong>${r.previousStatus}</strong> → <strong>${r.status}</strong>${r.statusChangedAt?' on '+new Date(r.statusChangedAt).toLocaleDateString('en-IN'):''}</div>`:'';
   const currentRes=r.resolution;
 
+  const dupWarnHTML = (() => {
+    if (r.isDuplicate) {
+      const winner = reconRows.find(w => w.invoiceKey === r.duplicateOfKey);
+      const winnerDesc = winner ? `₹${fmtINR(winner.invAmount)} · ${winner.status}` : '';
+      const viewLink = winner
+        ? `<a href="#" onclick="selectReconRow(${JSON.stringify(winner.invoiceKey).replace(/"/g,"'")},false);return false">View matched version →</a>`
+        : '';
+      return `<div class="dup-warning">⚠ <strong>Revised Invoice Copy</strong> — This copy (₹${fmtINR(r.invAmount)}) shares invoice number <strong>${esc(r.invInvoice)}</strong> with another entry${winnerDesc?` (${winnerDesc})`:''} that better matches the GRN. It is <strong>excluded from totals</strong>. ${viewLink}</div>`;
+    }
+    if (r.hasDuplicates) {
+      return `<div class="dup-warning" style="background:#fff7ed;border-color:#fb923c">ℹ <strong>Has Revised Copy</strong> — Another invoice with the same number was detected and flagged as a revised copy. It is excluded from totals.</div>`;
+    }
+    return '';
+  })();
+
   panel.innerHTML=`
+    ${dupWarnHTML}
     <div class="recon-detail-head">
       <h3 style="color:${sc}">${r.status==='MATCHED'?'✅':r.status==='DISCREPANCY'?'⚠':r.status==='PARTIAL'?'🔶':'❌'} ${r.status}</h3>
       ${r.resolution?`<span class="res-badge res-${r.resolution}">${r.resolution.replace('_',' ')}</span>`:''}

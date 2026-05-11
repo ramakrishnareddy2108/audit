@@ -163,6 +163,47 @@ const Reconcile = (() => {
     return newRow;
   }
 
+  // ── detect revised/duplicate invoice numbers ─────────────────
+  // Same invoice# + same vendor can appear twice when a vendor revises after negotiation.
+  // Winner = best GRN match; loser is flagged isDuplicate and excluded from totals.
+  function detectDuplicates(reconRows) {
+    const STATUS_SCORE = { MATCHED: 4, PARTIAL: 3, DISCREPANCY: 2, UNMATCHED: 1 };
+    const groups = new Map();
+
+    reconRows.forEach((row, i) => {
+      if (!row.invInvoice) return;
+      const vendorKey = row.invGstin ? norm(row.invGstin) : norm(row.invVendor || '');
+      const groupKey  = norm(row.invInvoice) + '|' + vendorKey;
+      if (!groups.has(groupKey)) groups.set(groupKey, []);
+      groups.get(groupKey).push(i);
+    });
+
+    groups.forEach((indices) => {
+      if (indices.length < 2) return;
+
+      // Sort: best GRN match first → smallest amount diff → lower invoice amount (revised = discounted)
+      indices.sort((a, b) => {
+        const sa = STATUS_SCORE[reconRows[a].status] || 0;
+        const sb = STATUS_SCORE[reconRows[b].status] || 0;
+        if (sa !== sb) return sb - sa;
+        const da = Math.abs(reconRows[a].amountDiff);
+        const db = Math.abs(reconRows[b].amountDiff);
+        if (Math.abs(da - db) > 0.01) return da - db;
+        return (reconRows[a].invAmount || 0) - (reconRows[b].invAmount || 0);
+      });
+
+      const allKeys = indices.map(i => reconRows[i].invoiceKey);
+      reconRows[indices[0]].hasDuplicates = true;
+      reconRows[indices[0]].duplicateGroup = allKeys;
+
+      for (let k = 1; k < indices.length; k++) {
+        reconRows[indices[k]].isDuplicate    = true;
+        reconRows[indices[k]].duplicateOfKey = reconRows[indices[0]].invoiceKey;
+        reconRows[indices[k]].duplicateGroup = allKeys;
+      }
+    });
+  }
+
   // ── main reconciliation run ───────────────────────────────────
   function run(cycle, prevReconRows) {
     const pages  = cycle.pages || {};
@@ -269,6 +310,7 @@ const Reconcile = (() => {
         _id: g._id
       }));
 
+    detectDuplicates(reconRows);
     return { reconRows, grnOnlyRows };
   }
 
@@ -288,12 +330,14 @@ const Reconcile = (() => {
       grnOnly:     (grnOnlyRows||[]).length,
       carried:     (carriedForward||[]).length,
       needsAction: rows.filter(r=>needsAction(r)).length,
-      invTotal:    rows.reduce((s,r)=>s+(r.invAmount||0),0),
-      grnTotal:    rows.reduce((s,r)=>s+(r.grnTotal||0),0)
+      duplicate:   rows.filter(r=>r.isDuplicate).length,
+      invTotal:    rows.filter(r=>!r.isDuplicate).reduce((s,r)=>s+(r.invAmount||0),0),
+      grnTotal:    rows.filter(r=>!r.isDuplicate).reduce((s,r)=>s+(r.grnTotal||0),0)
     };
   }
 
   function needsAction(r) {
+    if (r.isDuplicate) return false;
     if (['ACCEPTED','EXCLUDED'].includes(r.resolution)) return false;
     return ['DISCREPANCY','PARTIAL','UNMATCHED'].includes(r.status);
   }
@@ -331,19 +375,21 @@ const Reconcile = (() => {
       };
     };
 
-    // Sheet 1: Summary
+    // Sheet 1: Summary (duplicate rows excluded from totals)
+    const activeRows = rows.filter(r => !r.isDuplicate);
     const st = getStats(rows, grnOnly, carried);
     const ws1 = XLSX.utils.aoa_to_sheet([
       [`RECONCILIATION SUMMARY — ${cycle.cycleLabel||''}`],[`Generated: ${new Date().toLocaleString('en-IN')}`],[''],
       ['STATUS','COUNT','AMOUNT (₹)'],
-      ['✅ Matched',        st.matched,     rows.filter(r=>r.status==='MATCHED'&&!r.resolution).reduce((s,r)=>s+(r.invAmount||0),0)],
-      ['⚠ Discrepancy',    st.discrepancy, rows.filter(r=>r.status==='DISCREPANCY'&&!['ACCEPTED','EXCLUDED','DISPUTED','CREDIT_NOTE'].includes(r.resolution)).reduce((s,r)=>s+(r.invAmount||0),0)],
-      ['🔶 Partial',       st.partial,     rows.filter(r=>r.status==='PARTIAL'&&!r.resolution).reduce((s,r)=>s+(r.invAmount||0),0)],
-      ['❌ Unmatched',     st.unmatched,   rows.filter(r=>r.status==='UNMATCHED'&&r.resolution!=='EXCLUDED').reduce((s,r)=>s+(r.invAmount||0),0)],
-      ['🔵 Accepted',      st.accepted,    rows.filter(r=>r.resolution==='ACCEPTED').reduce((s,r)=>s+(r.invAmount||0),0)],
-      ['🚩 Disputed',      st.disputed,    rows.filter(r=>r.resolution==='DISPUTED').reduce((s,r)=>s+(r.invAmount||0),0)],
-      ['📝 Credit Note',   st.creditNote,  rows.filter(r=>r.resolution==='CREDIT_NOTE').reduce((s,r)=>s+(r.invAmount||0),0)],
-      ['⊘ Excluded',       st.excluded,    rows.filter(r=>r.resolution==='EXCLUDED').reduce((s,r)=>s+(r.invAmount||0),0)],
+      ['✅ Matched',        st.matched,     activeRows.filter(r=>r.status==='MATCHED'&&!r.resolution).reduce((s,r)=>s+(r.invAmount||0),0)],
+      ['⚠ Discrepancy',    st.discrepancy, activeRows.filter(r=>r.status==='DISCREPANCY'&&!['ACCEPTED','EXCLUDED','DISPUTED','CREDIT_NOTE'].includes(r.resolution)).reduce((s,r)=>s+(r.invAmount||0),0)],
+      ['🔶 Partial',       st.partial,     activeRows.filter(r=>r.status==='PARTIAL'&&!r.resolution).reduce((s,r)=>s+(r.invAmount||0),0)],
+      ['❌ Unmatched',     st.unmatched,   activeRows.filter(r=>r.status==='UNMATCHED'&&r.resolution!=='EXCLUDED').reduce((s,r)=>s+(r.invAmount||0),0)],
+      ['🔵 Accepted',      st.accepted,    activeRows.filter(r=>r.resolution==='ACCEPTED').reduce((s,r)=>s+(r.invAmount||0),0)],
+      ['🚩 Disputed',      st.disputed,    activeRows.filter(r=>r.resolution==='DISPUTED').reduce((s,r)=>s+(r.invAmount||0),0)],
+      ['📝 Credit Note',   st.creditNote,  activeRows.filter(r=>r.resolution==='CREDIT_NOTE').reduce((s,r)=>s+(r.invAmount||0),0)],
+      ['⊘ Excluded',       st.excluded,    activeRows.filter(r=>r.resolution==='EXCLUDED').reduce((s,r)=>s+(r.invAmount||0),0)],
+      ['🔄 Revised Copies', st.duplicate,  rows.filter(r=>r.isDuplicate).reduce((s,r)=>s+(r.invAmount||0),0)],
       ['📋 GRN Only',      st.grnOnly,     grnOnly.reduce((s,r)=>s+(r.amount||0),0)],
       ['📦 Carried Fwd',   st.carried,     ''],
       [''],
@@ -383,7 +429,18 @@ const Reconcile = (() => {
       XLSX.utils.book_append_sheet(wb,ws5,'Resolved');
     }
 
-    // Sheet 6: Credit Notes
+    // Sheet 6: Revised / Duplicate Invoices
+    const dupRows = rows.filter(r => r.isDuplicate);
+    if (dupRows.length) {
+      const ws6d = XLSX.utils.json_to_sheet(dupRows.map(r => ({
+        ...fmt(r),
+        'Superseded By': r.duplicateOfKey || ''
+      })));
+      ws6d['!cols'] = [14,6,20,28,16,18,14,12,8,24,30,14,12,16,12,30,16,14,14,24].map(w=>({wch:w}));
+      XLSX.utils.book_append_sheet(wb, ws6d, 'Revised Copies');
+    }
+
+    // Sheet 7: Credit Notes
     if(cns.length){
       const ws6=XLSX.utils.json_to_sheet(cns.map(c=>({
         'CN Number':c.cnNumber,'Vendor':c.vendor,'Amount(₹)':c.amount,
@@ -393,7 +450,7 @@ const Reconcile = (() => {
       XLSX.utils.book_append_sheet(wb,ws6,'Credit Notes');
     }
 
-    // Sheet 7: Carry Forward
+    // Sheet 8: Carry Forward
     if(carried.length){
       const ws7=XLSX.utils.json_to_sheet(carried.map(c=>({
         'From Cycle':c.fromCycle, 'Invoice':c.originalRow?.invInvoice||'',
