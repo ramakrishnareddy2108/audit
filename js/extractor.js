@@ -311,6 +311,124 @@ const Extractor = (() => {
     return '';
   }
 
+
+  // ── supplier master list ──────────────────────────────────────
+  const SUPPLIER_MASTER = [
+    'THE ALTERNATIVE SOURCE MEDICAL','BIOKRONE LABS','SRI SAI AGENCIES-VSP',
+    'SHARP MEDICAL SOLUTIONS PVT LTD','BIONIC MEDITECH LLP','FALCON HEALTH LLP',
+    'AA LIFE SCIENCES','PIONEER HEALTH CARE','ALS SURGICALS','ALIGN THERAPEUTICS',
+    'NEELKANTH MAHADEV HEALTH CARE','RELISYS MEDICAL DEVICES LIMITED',
+    'B&J HEALTHCARE PVT LTD','THAYAR ORTHO AND DIAGNOSTIC','GENUINE HEALTH CARE',
+    'HEALTH VISION SURGICALS','GESCO HEALTHCARE PVT LTD','SURYA MARKETING -VJA',
+    'R.K.PHARMA DISTRIBUTORS','SRI LAKSHMI SURGICAL AND MEDICALS -TPT',
+    'NSJ MEDICAL LIFE SCIENCES','INDIAN ORTHOCARE SURGICALS',
+    'BIOKRONE SCIENTIFIC PRIVATE LIMITED','KNOX HEALTHCARE',
+    'SUNRISE MEDICAL HEALTH CARE','SRIKAAR RETAIL PRIVATE LIMITED -VJA',
+    'ASTROMED HEALTH CARE INDIA PVT LTD-NLR','SCHILLER HEALTHCARE INDIA PVT. LTD.',
+    'SRI ANNAPURNA SURGICALS & MEDICALS','KARTHIKEYA MEDICINE HOUSE',
+    'SRI VENKATESWARA GALAXY MEDICAL DISTRIBUTORS PVT LTD',
+    'SKIN AESTHETICS INTERNATIONAL PVT LTD','RADHAKRISHNA PHARMA','AUROBINDO DRUGS',
+    'KALYAN PHARMA','LEO GRENPHARMA PVT LTD','R.K.MEDEQUIPS','NEW AGE BIOLOGICS',
+    'SAI SASI VACCINE & SPECIALITIES','STERIMED BIOSCIENCES','SRI RVM SURGICALS',
+    'VEERENDHRA SURGICAL&MEDICALS','J&J MEDITECH SURGICALS','SREERAMA MEDICINE HOUSE',
+    'NEW SRS MEDICAL AGENCIES','TRUST CHEMISTS AND DRUGGISTS LTD','SR DISTRIBUTORS -VJA',
+    'GLOBAL CARE PHARMA DISTRIBUTORS','SREE TRIVENI ENTERPRISES','KALYANI HEALTH PLUS',
+    'NEW RITHIKA MEDCIAL& SURGICAL DISTRIBUTORS','AMRUTHA PHARMA HUB -TPT',
+    'SAI SRI SURGICALS AND MEDICALS -TPT','ARKA SURGICALS','RR PHARMA DISTRIBUTORS',
+    'OM LAKSHMI GANAPATHI MEDICAL & SURGICALS','JAYA SURGICAL AND PHARMA PVT LTD',
+    'MOTHER MEDICAL AGENCY','ALEXON HEALTH CARE','7HILLS MEDICAL AGENCIES',
+    'MURALI KRISHNA MEDICAL DISTRIBUTORS','MEDOVATION INC',
+    'VANDE BHARAT PHARMACEUTIGALS-HYD','JAYHIDA MEDICARE PVT LTD',
+    'HANUMAN MEDICAL DISTRIBUTORS','LAKSHMI SREENIVASA MEDICAL AGENCIES',
+    'RS PHRAMA -CHENNAI','SREE RAM MEDICAL AGENCIES -VJA','RESPURE HEALTH CARE -CHENNAI',
+    'SRI LAKSHMI KISHORE PHARMA DISTRIBUTORS','SV PRIDE MEDICAL AGENCIES -NLR',
+    'SHIVAM DRUGS&CHEMICALS','SRI SATYA SAI ENTERPRISES',
+    'SRI SAI MURALI MEDICAL AGENCIES -TPT','VISHNU MEDICAL AGENCIES -VJA',
+    'PRECIOUS SURGICALS','DHANVANTHARI SURGICALS','PRABAVATHI MEDICAL AGENCIES',
+    'AMRUT MEDICALS','SREE ADITYA AGENCIES','SRI VEDADRI MEDICAL AGENCIES',
+    'ARJOHUNTLEIGH HEALTH CARE INDIA PVT LTD -VJA','SRI SAI PURNA ENTERPRISES -VJA',
+    'VAHINI HEALTHCARE PVT LTD','RIVAAN HEALTHCARE PVT LTD',
+    'SRI VENUS SURGICALS AND MEDICALS','WAL MART INDIA PVT LTD',
+    'SRI MARUTI AGENCIES - VJA','MEDIHAUXE PHARMACEUTICALS PRIVATE LIMITED-VJA',
+    'CARDIO CONSUMABLES PVT LTD','PETA PHARMACEUTICALS','PRAXIA HEALTH PRIVATE LIMITED',
+    'MS SPECIALITIES','SRI RAMADOOT ENTERPRISES','STRYKER INDIA PRIVATE LIMITED',
+    'RAMYA AGENCIES','COASTAL AGRO FOODS','CIPHER MEDITECH LLP','CARE ASSOCIATES',
+    'SS PHARMA-HYD','DHANVANTHARI SURGICALS HYD','SREENIDHI SURGICALS -HYD',
+    'SRI KALYANI PHAMACEUTICALS','GOURI MEDICALS-HYD','MEDLINE ENTERPRISES-HYD',
+    'NITTE DEEMED TO BE UNIVERSITY','VISHNU SAI MEDICAL AGENCIES',
+    'PURUSHOTHAM MEDICAL AGENCIES','ELITE HEALTHCARE SOLUTIONS','SUNIL ENTERPRISES',
+    'MANJULA MEDICAL AGENCIES','SRI DATTA SAI ENTERPRISES','ARJUN MEDICAL AGENCY',
+    'SAI PAVITRA MEDICAL SERVICES','SAHRUDAYA DEVICES','GANESH MEDICAL AND SURGICALS',
+    'MAC ASSOCIATES','PR ENTERPRISES','SRI RAMA NAGA SAI MEDICAL AGENCY',
+    'SWAGATH INTENATIONAL','MEDIGO MULTI SPECIALITY HOSPITAL',
+    'SURYATEJA MEDICAL AND SURGICALS','M/S.3 VIEW TECHNOLOGIES',
+    'SREE SAI VISHNU INDUSTRIAL PRODUCTS','ADROIT ACCESS SYSTEMS PVT LTD',
+    'LIFECORE SYSTEMS','MAHINDRA INDUSTRIES','CUBIX MARKETING','M/S GAYATHRI FILING STN',
+    'HEALTEC MANUFACTURING COMPANY','TRIVITECH DIAGNOSTIC SOLUTION PRIVATE LIMITED',
+    'RAJSHRI BHARATH COMMUNICATION','CHERRYS ENTERPRISES','VIYONA BIO SYSTEMS',
+    'AMAZON .IN','S T TRADERS ANNEXE CHEAP JACK','GEMINI COFFEE VENDING SOLUTIONS LLP',
+    'DENTCARE DENTAL LAB PVT LTD','SRI ASHAPURA TRADERS','VARDHMAN THREADS',
+    'SAI TEJA SURGICALS','SREE PADMAVATHI PAPER ENTERPRISES','MOHIT SCREENS',
+    'TELSON TECHNO SOLUTIONS','V N MEDICAL SERVICES',
+    'BECK MANN DIAGNOSTICS & MEDICALS SYSTEMS','PROMPT SOLUTIONS PVT .LTD',
+    'SRI KRISHNA MEDICAL OXYGEN','BJ ELECTRICALS','HEALTH CARE NEEDS',
+    'FBG THE BEST OR NOTHING','KUMAR RUBBER STAMPS','BALAJI ELECTRICALS & HARDWARE',
+    'OM HARDWARE AND ELECTRICALS','SREE VINYA TRADERS','MADHU MEDI SYSTEM',
+    'KRISHNA ENTERPRISES','HAASINI MANUFACTURING COMPANY','RR DENTAL LABS PVT LTD',
+    'KALA ENTERPRISES','D-MART SUPERMARKET','SARAVANA FURNISHING',
+    'SARVAM SAFETY EQUIPMENT (P) LTD','HELLO MOBILES','LAVANYA ENTERPRISES TIRUPATI',
+    'LUB DUB MEDICAL','SLK SOLUTIONS CO','D MAX DENTAL LAB','SRIDEVI AGENCIES',
+    'SRI SAI RAM PLYWOOD & HARDWARE'
+  ];
+
+  // strip location suffixes and common legal suffixes for core name comparison
+  const LOC_SUFFIX = /[\s\-]+(VSP|VJA|HYD|NLR|TPT|CHENNAI|TIRUPATI|VIJAYAWADA|VIZAG|HYDERABAD)\s*$/i;
+  const LEG_SUFFIX = /\s+(PVT\.?\s*LTD\.?|PRIVATE\s+LIMITED|LTD\.?|LLP|PVT|LIMITED|PRIVATE|CO\.|CORP\.?|INDIA)\s*$/i;
+
+  function normMaster(s) {
+    return s.toUpperCase()
+      .replace(LOC_SUFFIX,'').replace(LEG_SUFFIX,'')
+      .replace(/[^A-Z0-9]/g,'').trim();
+  }
+
+  // pre-build index for performance
+  const _masterIndex = SUPPLIER_MASTER.map(name => ({ name, key: normMaster(name) }));
+
+  // score overlap between two normalised strings (Jaccard on 3-grams)
+  function trigramScore(a, b) {
+    if (!a || !b) return 0;
+    const tg = s => { const t=new Set(); for(let i=0;i<=s.length-3;i++) t.add(s.slice(i,i+3)); return t; };
+    const ta=tg(a), tb=tg(b);
+    let inter=0; for(const x of ta) if(tb.has(x)) inter++;
+    return inter / (ta.size + tb.size - inter + 1e-9);
+  }
+
+  // match raw OCR vendor string against master list
+  // returns { matched: canonicalName|null, score, isKnown }
+  function matchToMaster(raw) {
+    if (!raw || raw.length < 3) return { matched: null, score: 0, isKnown: false };
+    const normRaw = normMaster(raw);
+    if (!normRaw) return { matched: null, score: 0, isKnown: false };
+
+    let best = null, bestScore = 0;
+    for (const entry of _masterIndex) {
+      // exact normalised match
+      if (entry.key === normRaw) return { matched: entry.name, score: 1.0, isKnown: true };
+      // prefix match (raw starts with master core or vice versa, min 6 chars)
+      const minLen = Math.min(normRaw.length, entry.key.length);
+      if (minLen >= 6 && (normRaw.startsWith(entry.key.slice(0,minLen)) || entry.key.startsWith(normRaw.slice(0,minLen)))) {
+        const sc = minLen / Math.max(normRaw.length, entry.key.length);
+        if (sc > bestScore) { bestScore = sc; best = entry.name; }
+      }
+      // trigram similarity
+      const sc = trigramScore(normRaw, entry.key);
+      if (sc > bestScore) { bestScore = sc; best = entry.name; }
+    }
+    const THRESHOLD = 0.45;
+    if (bestScore >= THRESHOLD && best) return { matched: best, score: bestScore, isKnown: true };
+    return { matched: null, score: bestScore, isKnown: false };
+  }
+
   function parseInvoiceText(text) {
     if (!text) return { vendor: '', invoice: '', gstin: '', amount: '', invoiceDate: '', confidence: 'low' };
     const lines       = text.split('\n').map(l => l.trim()).filter(Boolean);
@@ -318,12 +436,16 @@ const Extractor = (() => {
     const gstin       = gstins[0] || '';
     const invoice     = extractInvoiceNo(lines);
     const amount      = extractAmount(text, lines);
-    const vendor      = extractVendor(lines);
+    const vendorRaw   = extractVendor(lines);
+    const masterMatch = matchToMaster(vendorRaw);
+    const vendor      = masterMatch.matched || vendorRaw;
+    const vendorKnown = masterMatch.isKnown;
+    const vendorScore = masterMatch.score;
     const invoiceDate = extractInvoiceDate(text, lines);
     const filled      = [gstin, invoice, amount, vendor, invoiceDate].filter(Boolean).length;
     const invoiceOk   = invoice && !isBadInvoiceNo(invoice);
     const confidence  = (filled >= 4 && invoiceOk) ? 'high' : filled >= 2 ? 'medium' : 'low';
-    return { vendor, invoice, gstin, amount, invoiceDate, confidence };
+    return { vendor, vendorRaw, vendorKnown, vendorScore, invoice, gstin, amount, invoiceDate, confidence };
   }
 
   // ── main extract one page ─────────────────────────────────────
@@ -417,6 +539,7 @@ const Extractor = (() => {
   return {
     setCredentials, hasCred, getCredSummary,
     extractOnePage, parsePageRange, parseFromOCR, testConnection,
+    matchToMaster, get supplierMaster() { return SUPPLIER_MASTER; },
     get costPerPage() { return credMode === 'vision' ? COST_VISION : COST_CLAUDE; }
   };
 })();

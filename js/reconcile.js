@@ -408,5 +408,56 @@ const Reconcile = (() => {
     XLSX.writeFile(wb,`reconciliation_${label}_${new Date().toISOString().slice(0,10)}.xlsx`);
   }
 
-  return { parseGRNFile, run, getStats, needsAction, exportExcel, norm, nAmt, parseDate };
+
+  // ── supplier-wise audit stats ─────────────────────────────────
+  function getSupplierStats(reconRows, grnOnlyRows) {
+    const map = new Map(); // canonical vendor name → stats
+
+    const getOrCreate = name => {
+      const key = name || 'Unknown';
+      if (!map.has(key)) map.set(key, {
+        vendor: key, invoiceCount: 0, invoiceTotal: 0,
+        grnTotal: 0, matchedCount: 0, discrepancyCount: 0,
+        partialCount: 0, unmatchedCount: 0, resolvedCount: 0,
+        totalDiff: 0, maxDiff: 0, rows: []
+      });
+      return map.get(key);
+    };
+
+    for (const r of (reconRows || [])) {
+      const s = getOrCreate(r.invVendor);
+      s.invoiceCount++;
+      s.invoiceTotal  += (r.invAmount  || 0);
+      s.grnTotal      += (r.grnTotal   || 0);
+      const diff = Math.abs(r.amountDiff || 0);
+      s.totalDiff += diff;
+      if (diff > s.maxDiff) s.maxDiff = diff;
+      if (['ACCEPTED','EXCLUDED','DISPUTED','CREDIT_NOTE'].includes(r.resolution)) s.resolvedCount++;
+      else if (r.status === 'MATCHED')      s.matchedCount++;
+      else if (r.status === 'DISCREPANCY')  s.discrepancyCount++;
+      else if (r.status === 'PARTIAL')      s.partialCount++;
+      else if (r.status === 'UNMATCHED')    s.unmatchedCount++;
+      s.rows.push(r);
+    }
+
+    // GRN-only rows (grouped by supplier name from GRN)
+    for (const g of (grnOnlyRows || [])) {
+      const s = getOrCreate(g.supplier || 'Unknown');
+      s.grnOnlyCount = (s.grnOnlyCount || 0) + 1;
+      s.grnTotal += (g.amount || 0);
+    }
+
+    const list = [...map.values()].map(s => ({
+      ...s,
+      netDiff:    nAmt(s.invoiceTotal - s.grnTotal),
+      actionCount: s.discrepancyCount + s.partialCount + s.unmatchedCount,
+      matchRate:  s.invoiceCount > 0 ? Math.round(s.matchedCount / s.invoiceCount * 100) : 0
+    }));
+
+    // Sort: highest actionCount first, then by invoiceTotal desc
+    list.sort((a,b) => b.actionCount - a.actionCount || b.invoiceTotal - a.invoiceTotal);
+    return list;
+  }
+
+  return { parseGRNFile, run, getStats, needsAction, getSupplierStats, exportExcel, norm, nAmt, parseDate };
 })();

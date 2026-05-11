@@ -1120,3 +1120,250 @@ function confirmOK(){ document.getElementById('confirm-modal').style.display='no
 function confirmCancel(){ document.getElementById('confirm-modal').style.display='none'; }
 function confirmExportInvoices(){ const n=Object.values(cycle?.pages||{}).filter(r=>r.status==='ok'||r.status==='manual').length;showConfirm('Export invoices to Excel?',`${n} invoices ready.`,exportInvoicesExcel); }
 function confirmExportRecon(){ showConfirm('Export reconciliation to Excel?','Creates 7 sheets: Summary · Needs Action · All Transactions · GRN Only · Resolved · Credit Notes · Carry Forward',()=>{confirmCancel();Reconcile.exportExcel(cycle);}); }
+
+// ═══════════════════════════════════════════════════════════════════
+// SUPPLIER AUDIT TAB
+// ═══════════════════════════════════════════════════════════════════
+
+let _supplierStats = [];   // cached supplier stats array
+let _selectedSupplier = null;
+
+function renderSupplierAudit() {
+  if (!reconRows.length) {
+    document.getElementById('supplier-cards').innerHTML = '<div class="empty-state">Run reconciliation first to see supplier audit.</div>';
+    document.getElementById('supplier-chart-wrap').style.display = 'none';
+    return;
+  }
+
+  _supplierStats = Reconcile.getSupplierStats(reconRows, grnOnlyRows);
+
+  // apply search/sort/filter
+  const q      = (document.getElementById('supplier-search')?.value || '').toLowerCase();
+  const sortBy = document.getElementById('supplier-sort')?.value || 'action';
+  const filt   = document.getElementById('supplier-filter')?.value || '';
+
+  let list = _supplierStats;
+  if (q)   list = list.filter(s => s.vendor.toLowerCase().includes(q));
+  if (filt === 'action')  list = list.filter(s => s.actionCount > 0);
+  if (filt === 'clean')   list = list.filter(s => s.actionCount === 0 && s.invoiceCount > 0);
+  if (filt === 'unknown') list = list.filter(s => {
+    // check if vendor is in master list
+    const match = Extractor.matchToMaster(s.vendor);
+    return !match.isKnown;
+  });
+
+  if (sortBy === 'total') list = [...list].sort((a,b) => b.invoiceTotal - a.invoiceTotal);
+  if (sortBy === 'diff')  list = [...list].sort((a,b) => Math.abs(b.netDiff) - Math.abs(a.netDiff));
+  if (sortBy === 'name')  list = [...list].sort((a,b) => a.vendor.localeCompare(b.vendor));
+  // default 'action': already sorted by actionCount then total
+
+  // update subtitle
+  const totalSuppliers = _supplierStats.length;
+  const suppliersWithIssues = _supplierStats.filter(s => s.actionCount > 0).length;
+  document.getElementById('supplier-audit-sub').textContent =
+    `${totalSuppliers} suppliers · ${suppliersWithIssues} with issues · showing ${list.length}`;
+
+  // render bar chart (top 12 by invoice total)
+  renderSupplierChart(_supplierStats);
+
+  // render cards
+  if (!list.length) {
+    document.getElementById('supplier-cards').innerHTML = '<div class="empty-state">No suppliers match filter.</div>';
+    return;
+  }
+  document.getElementById('supplier-cards').innerHTML = list.map(s => supplierCardHTML(s)).join('');
+}
+
+function supplierCardHTML(s) {
+  const total = s.invoiceCount || 1;
+  const matchPct   = Math.round(s.matchedCount   / total * 100);
+  const discPct    = Math.round(s.discrepancyCount / total * 100);
+  const partialPct = Math.round(s.partialCount    / total * 100);
+  const unmatchPct = Math.round(s.unmatchedCount  / total * 100);
+  const resolvedPct= Math.round(s.resolvedCount   / total * 100);
+
+  const hasAction = s.actionCount > 0;
+  const allClean  = !hasAction && s.invoiceCount > 0;
+  const hasPartial = s.partialCount > 0 && s.discrepancyCount === 0 && s.unmatchedCount === 0;
+  const diffAbs   = Math.abs(s.netDiff);
+  const diffCls   = diffAbs === 0 ? 'sup-diff-ok' : diffAbs <= 500 ? 'sup-diff-warn' : 'sup-diff-bad';
+  const diffStr   = diffAbs === 0 ? '✓ Exact' : (s.netDiff > 0 ? '+' : '') + fmtINR(s.netDiff);
+  const badgeCls  = hasAction ? 'sup-badge-action' : allClean ? 'sup-badge-clean' : 'sup-badge-partial';
+  const badgeTxt  = hasAction ? `⚠ ${s.actionCount} issues` : allClean ? '✅ All clear' : '🔶 Partial';
+  const cardCls   = hasAction ? 'has-action' : allClean ? 'all-clean' : hasPartial ? 'has-partial' : '';
+  const matchStr  = Extractor.matchToMaster(s.vendor);
+  const unknownBadge = !matchStr.isKnown ? '<span class="sup-card-badge sup-badge-unknown" title="Not in supplier master list">⚠ Unrecognised</span>' : '';
+
+  return `<div class="sup-card ${cardCls}" onclick="openSupplierDrilldown(${JSON.stringify(s.vendor)})">
+    <div class="sup-card-header">
+      <div>
+        <div class="sup-card-name">${esc(s.vendor)}</div>
+        ${unknownBadge}
+      </div>
+      <span class="sup-card-badge ${badgeCls}">${badgeTxt}</span>
+    </div>
+    <div class="sup-progress-wrap">
+      <div class="sup-progress-bar" title="Green=Matched · Red=Discrepancy · Orange=Partial · Gray=Unmatched · Purple=Resolved">
+        <div class="sup-prog-matched"   style="width:${matchPct}%"></div>
+        <div class="sup-prog-disc"      style="width:${discPct}%"></div>
+        <div class="sup-prog-partial"   style="width:${partialPct}%"></div>
+        <div class="sup-prog-unmatched" style="width:${unmatchPct}%"></div>
+        <div class="sup-prog-resolved"  style="width:${resolvedPct}%"></div>
+      </div>
+    </div>
+    <div class="sup-stats-row">
+      <div class="sup-stat"><span class="sup-stat-num">${s.invoiceCount}</span><span class="sup-stat-lbl">Invoices</span></div>
+      <div class="sup-stat"><span class="sup-stat-num" style="color:#10b981">${s.matchedCount}</span><span class="sup-stat-lbl">Matched</span></div>
+      ${s.discrepancyCount  ? `<div class="sup-stat"><span class="sup-stat-num" style="color:#ef4444">${s.discrepancyCount}</span><span class="sup-stat-lbl">Discrepancy</span></div>` : ''}
+      ${s.partialCount      ? `<div class="sup-stat"><span class="sup-stat-num" style="color:#f59e0b">${s.partialCount}</span><span class="sup-stat-lbl">Partial</span></div>` : ''}
+      ${s.unmatchedCount    ? `<div class="sup-stat"><span class="sup-stat-num" style="color:#6b7280">${s.unmatchedCount}</span><span class="sup-stat-lbl">Unmatched</span></div>` : ''}
+      ${s.resolvedCount     ? `<div class="sup-stat"><span class="sup-stat-num" style="color:#8b5cf6">${s.resolvedCount}</span><span class="sup-stat-lbl">Resolved</span></div>` : ''}
+      <div class="sup-stat"><span class="sup-stat-num">${matchPct}%</span><span class="sup-stat-lbl">Match rate</span></div>
+    </div>
+    <div class="sup-amounts">
+      <span>Invoice: <strong>${fmtINR(s.invoiceTotal)}</strong></span>
+      <span>GRN: <strong>${fmtINR(s.grnTotal)}</strong></span>
+      <span class="${diffCls}">${diffStr}</span>
+    </div>
+  </div>`;
+}
+
+function renderSupplierChart(list) {
+  const wrap = document.getElementById('supplier-chart-wrap');
+  const el   = document.getElementById('supplier-chart');
+  if (!list.length) { wrap.style.display = 'none'; return; }
+  wrap.style.display = 'block';
+
+  // top 12 by invoice total
+  const top = [...list].sort((a,b) => b.invoiceTotal - a.invoiceTotal).slice(0, 12);
+  const maxVal = top[0]?.invoiceTotal || 1;
+
+  el.innerHTML = top.map(s => {
+    const total    = s.invoiceCount || 1;
+    const matchW   = Math.round(s.matchedCount    / total * 100);
+    const discW    = Math.round(s.discrepancyCount / total * 100);
+    const partialW = Math.round(s.partialCount     / total * 100);
+    const unmatchW = Math.round(s.unmatchedCount   / total * 100);
+    const resolvedW= Math.round(s.resolvedCount    / total * 100);
+    const diffAbs  = Math.abs(s.netDiff);
+    const diffCls  = diffAbs === 0 ? 'sup-diff-ok' : diffAbs <= 500 ? 'sup-diff-warn' : 'sup-diff-bad';
+    const diffTxt  = diffAbs === 0 ? '✓' : (s.netDiff > 0 ? '+' : '') + fmtINR(s.netDiff);
+
+    return `<div class="sup-bar-row" onclick="openSupplierDrilldown(${JSON.stringify(s.vendor)})" style="cursor:pointer">
+      <div class="sup-bar-label" title="${esc(s.vendor)}">${esc(s.vendor)}</div>
+      <div class="sup-bar-track" title="Invoice: ${fmtINR(s.invoiceTotal)} | Matched: ${s.matchedCount} | Issues: ${s.actionCount}">
+        <div class="sup-bar-fill-matched"   style="width:${matchW}%"></div>
+        <div class="sup-bar-fill-disc"      style="width:${discW}%"></div>
+        <div class="sup-bar-fill-partial"   style="width:${partialW}%"></div>
+        <div class="sup-bar-fill-unmatched" style="width:${unmatchW}%"></div>
+        <div class="sup-bar-fill-resolved"  style="width:${resolvedW}%"></div>
+      </div>
+      <div class="sup-bar-val">
+        <span>${fmtINR(s.invoiceTotal)}</span>
+        <span class="${diffCls}" style="margin-left:4px;font-size:9px">${diffTxt}</span>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+// ── Supplier drill-down ───────────────────────────────────────────
+function openSupplierDrilldown(vendorName) {
+  _selectedSupplier = vendorName;
+  const s = _supplierStats.find(x => x.vendor === vendorName);
+  if (!s) return;
+
+  const panel = document.getElementById('supplier-drilldown');
+  panel.style.display = 'block';
+  document.getElementById('supplier-drilldown-title').textContent = vendorName;
+  panel.scrollIntoView({ behavior: 'smooth', block: 'start' });
+
+  const rows = s.rows || [];
+  const diffAbs = Math.abs(s.netDiff);
+  const diffCls = diffAbs === 0 ? 'sup-diff-ok' : diffAbs <= 500 ? 'sup-diff-warn' : 'sup-diff-bad';
+  const matchStr = Extractor.matchToMaster(vendorName);
+
+  document.getElementById('supplier-drilldown-body').innerHTML = `
+    <!-- KPI bar -->
+    <div class="sup-summary-kpis">
+      <div class="stat-card"><div class="stat-num">${s.invoiceCount}</div><div class="stat-lbl">Total Invoices</div></div>
+      <div class="stat-card"><div class="stat-num" style="color:#10b981">${s.matchedCount}</div><div class="stat-lbl">Matched</div></div>
+      <div class="stat-card" style="${s.actionCount > 0 ? 'border:1px solid #fca5a5' : ''}">
+        <div class="stat-num" style="color:${s.actionCount > 0 ? '#c81e1e' : '#1a1a2e'}">${s.actionCount}</div>
+        <div class="stat-lbl">Needs Action</div>
+      </div>
+      <div class="stat-card"><div class="stat-num" style="font-size:15px">${fmtINR(s.invoiceTotal)}</div><div class="stat-lbl">Invoice Total</div></div>
+      <div class="stat-card"><div class="stat-num ${diffCls}" style="font-size:15px">${diffAbs === 0 ? '✓ Exact' : fmtINR(s.netDiff)}</div><div class="stat-lbl">Net Variance</div></div>
+    </div>
+    ${!matchStr.isKnown ? `<div class="alert alert-warn" style="margin-bottom:12px;font-size:12px">⚠ <strong>"${esc(vendorName)}"</strong> is not in the supplier master list — verify this vendor name is correct.</div>` : ''}
+    <!-- Invoice table -->
+    <div class="tbl-wrap">
+      <table class="sup-drilldown-table">
+        <thead><tr>
+          <th style="width:40px">Page</th>
+          <th style="width:16%">Invoice No</th>
+          <th style="width:12%">Date</th>
+          <th style="width:12%;text-align:right">Inv Amount</th>
+          <th style="width:8%">GRNs</th>
+          <th style="width:12%;text-align:right">GRN Total</th>
+          <th style="width:10%;text-align:right">Diff</th>
+          <th style="width:100px">Status</th>
+          <th style="width:80px">Resolution</th>
+        </tr></thead>
+        <tbody>
+          ${rows.map(r => {
+            const diff     = r.amountDiff || 0;
+            const diffCls  = Math.abs(diff) <= 100 ? 'diff-ok' : Math.abs(diff) <= 500 ? 'diff-warn' : 'diff-bad';
+            const statusClr= {MATCHED:'#057a55',DISCREPANCY:'#c81e1e',PARTIAL:'#d97706',UNMATCHED:'#6b7280'}[r.status]||'#6b7280';
+            const resBadge = r.resolution ? `<span class="res-badge res-${r.resolution}" style="font-size:9px">${r.resolution.replace('_',' ')}</span>` : '';
+            return `<tr onclick="switchTab('grn');selectReconRow(${JSON.stringify(r.invoiceKey||'')},false)" title="Click to view in reconciliation">
+              <td class="td-muted">${r.page||'—'}</td>
+              <td>${esc(r.invInvoice||'—')}</td>
+              <td>${esc(r.invDate||'—')}</td>
+              <td style="text-align:right;font-weight:600">${fmtINR(r.invAmount||0)}</td>
+              <td style="text-align:center">${(r.grnEntries||[]).length}</td>
+              <td style="text-align:right">${r.grnTotal ? fmtINR(r.grnTotal) : '—'}</td>
+              <td style="text-align:right" class="${diffCls}">${diff !== 0 ? (diff > 0 ? '+' : '') + fmtINR(diff) : '✓'}</td>
+              <td><span style="font-size:11px;font-weight:600;color:${statusClr}">${r.status}</span></td>
+              <td>${resBadge||'—'}</td>
+            </tr>`;
+          }).join('')}
+        </tbody>
+        <tfoot>
+          <tr style="background:#f8f9fa;font-weight:700">
+            <td colspan="3" style="padding:8px 10px;font-size:12px">Total (${rows.length} invoices)</td>
+            <td style="text-align:right;padding:8px 10px">${fmtINR(s.invoiceTotal)}</td>
+            <td></td>
+            <td style="text-align:right;padding:8px 10px">${fmtINR(s.grnTotal)}</td>
+            <td style="text-align:right;padding:8px 10px" class="${diffCls}">${diffAbs === 0 ? '✓' : (s.netDiff > 0 ? '+' : '') + fmtINR(s.netDiff)}</td>
+            <td colspan="2"></td>
+          </tr>
+        </tfoot>
+      </table>
+    </div>`;
+}
+
+function closeSupplierDrilldown() {
+  document.getElementById('supplier-drilldown').style.display = 'none';
+  _selectedSupplier = null;
+}
+
+// hook into switchTab to auto-render supplier audit
+const _origSwitchTab = switchTab;
+// override switchTab to trigger supplier audit render
+(function() {
+  const orig = switchTab;
+  window.switchTab = function(tab) {
+    // add supplier to pane toggle list
+    ['viewer','review','table','grn','supplier'].forEach(t => {
+      const pane = document.getElementById('pane-'+t);
+      if (pane) pane.style.display = t === tab ? 'block' : 'none';
+      const btn = document.getElementById('tab-'+t);
+      if (btn) btn.classList.toggle('active', t === tab);
+    });
+    if (tab === 'table')    renderTable();
+    if (tab === 'review')   renderReviewQueue();
+    if (tab === 'grn')      { renderGRNFileList(); renderCNList(); if (reconRows.length) renderReconSummaryCards(); }
+    if (tab === 'supplier') renderSupplierAudit();
+    activeTab = tab;
+  };
+})();
