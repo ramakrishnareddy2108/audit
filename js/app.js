@@ -1185,14 +1185,12 @@ let _supplierStats = [];   // cached supplier stats array
 let _selectedSupplier = null;
 
 function renderSupplierAudit() {
-  const emptyEl    = document.getElementById('supplier-empty');
-  const insightsEl = document.getElementById('supplier-insights');
-  const tableWrap  = document.getElementById('supplier-table-wrap');
+  const emptyEl   = document.getElementById('supplier-empty');
+  const tableWrap = document.getElementById('supplier-table-wrap');
 
   if (!reconRows.length) {
-    emptyEl.style.display    = 'block';
-    insightsEl.style.display = 'none';
-    tableWrap.style.display  = 'none';
+    emptyEl.style.display   = 'block';
+    tableWrap.style.display = 'none';
     return;
   }
 
@@ -1255,26 +1253,22 @@ function filterSupplierTable(q) {
 }
 
 function showSupplierInsights(vendorName) {
-  const insightsEl = document.getElementById('supplier-insights');
-  if (!vendorName) { insightsEl.style.display = 'none'; return; }
+  if (!vendorName) { closeSupplierDrilldown(); return; }
 
   const s = _supplierStats.find(x => x.vendor === vendorName);
-  if (!s) { insightsEl.style.display = 'none'; return; }
+  if (!s) return;
 
   _selectedSupplier = vendorName;
-  insightsEl.style.display = 'block';
 
-  // set detail header title
+  // set modal title and open it
   const titleEl = document.getElementById('sup-detail-title');
   if (titleEl) titleEl.textContent = vendorName;
+  document.getElementById('supplier-modal').style.display = 'flex';
 
   // highlight selected row in summary table
   document.querySelectorAll('.sup-tbl-row').forEach(tr => {
-    tr.classList.toggle('sup-tbl-selected', tr.querySelector('.sup-tbl-name')?.textContent === vendorName);
+    tr.classList.toggle('sup-tbl-selected', tr.dataset.vendor === vendorName);
   });
-
-  // scroll insights into view
-  insightsEl.scrollIntoView({ behavior: 'smooth', block: 'start' });
 
   const diffAbs   = Math.abs(s.netDiff);
   const matchStr  = Extractor.matchToMaster(vendorName);
@@ -1401,15 +1395,19 @@ function showSupplierInsights(vendorName) {
       <div class="tbl-wrap">
         <table class="sup-drilldown-table">
           <thead><tr>
-            <th>GRN Ref / Details</th>
-            <th>Vendor (GRN)</th>
+            <th>GRN No</th>
+            <th>GRN Date</th>
+            <th>Invoice No (GRN)</th>
+            <th>Location</th>
             <th style="text-align:right">Amount</th>
             <th>Action Required</th>
           </tr></thead>
           <tbody>
             ${grnOnly.map(g => `<tr>
-              <td>${esc(g.invoice||g.ref||'—')}</td>
-              <td>${esc(g.supplier||'—')}</td>
+              <td><strong>${esc(g.grnNo||'—')}</strong></td>
+              <td class="td-muted">${esc(g.grnDate||'—')}</td>
+              <td>${esc(g.invoiceNo||'—')}</td>
+              <td class="td-muted">${esc(g.location||g.grnType||'—')}</td>
               <td style="text-align:right;font-weight:600">${fmtINR(g.amount||0)}</td>
               <td class="si-action-hint">Request invoice from vendor</td>
             </tr>`).join('')}
@@ -1434,7 +1432,7 @@ function openSupplierDrilldown(vendorName) {
 }
 
 function closeSupplierDrilldown() {
-  document.getElementById('supplier-insights').style.display = 'none';
+  document.getElementById('supplier-modal').style.display = 'none';
   _selectedSupplier = null;
   document.querySelectorAll('.sup-tbl-row').forEach(tr => tr.classList.remove('sup-tbl-selected'));
 }

@@ -337,31 +337,7 @@
         </table>
       </div>
 
-      <!-- insights panel (hidden until a row is clicked) -->
-      <div id="supplier-insights" style="display:none">
-
-        <!-- selected supplier header -->
-        <div class="sup-detail-header">
-          <div id="sup-detail-title" style="font-size:14px;font-weight:700;color:#1a1a2e"></div>
-          <button class="btn-sm" onclick="closeSupplierDrilldown()">✕ Close</button>
-        </div>
-
-        <!-- KPI summary bar -->
-        <div id="sup-kpis" class="sup-kpi-bar"></div>
-
-        <!-- action guidance -->
-        <div id="sup-action-box"></div>
-
-        <!-- breakdown chips -->
-        <div id="sup-breakdown-chips" class="sup-chips-row"></div>
-
-        <!-- invoice lines table -->
-        <div id="sup-invoice-table"></div>
-
-        <!-- GRN-only section -->
-        <div id="sup-grn-only"></div>
-
-      </div>
+      <!-- insights rendered in modal popup below -->
 
       <!-- empty state when no reconciliation run -->
       <div id="supplier-empty" class="empty-state" style="margin-top:24px">Run reconciliation first to see supplier audit.</div>
@@ -466,6 +442,23 @@
       <button class="btn-primary" id="ec-remaining-btn" onclick="extractChoiceRemaining()"></button>
       <button class="btn-warn" id="ec-all-btn" onclick="extractChoiceAll()"></button>
       <button onclick="extractChoiceCancel()">Cancel</button>
+    </div>
+  </div>
+</div>
+
+<!-- SUPPLIER DETAIL MODAL -->
+<div class="modal-overlay" id="supplier-modal" style="display:none" onclick="if(event.target===this)closeSupplierDrilldown()">
+  <div class="modal sup-modal">
+    <div class="sup-modal-header">
+      <div id="sup-detail-title" style="font-size:15px;font-weight:700;color:#1a1a2e"></div>
+      <button class="btn-sm" onclick="closeSupplierDrilldown()">✕ Close</button>
+    </div>
+    <div class="sup-modal-body">
+      <div id="sup-kpis" class="sup-kpi-bar"></div>
+      <div id="sup-action-box"></div>
+      <div id="sup-breakdown-chips" class="sup-chips-row"></div>
+      <div id="sup-invoice-table"></div>
+      <div id="sup-grn-only"></div>
     </div>
   </div>
 </div>
