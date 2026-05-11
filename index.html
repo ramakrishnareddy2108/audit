@@ -315,26 +315,36 @@
           <div style="font-size:15px;font-weight:700">Supplier-wise Audit</div>
           <div style="font-size:12px;color:#6b7280" id="supplier-audit-sub">Run reconciliation to see supplier breakdown</div>
         </div>
+        <input type="text" id="supplier-search" placeholder="🔍 Search supplier…"
+          oninput="filterSupplierTable(this.value)"
+          style="font-size:12px;padding:7px 12px;border:1px solid #d0d0d0;border-radius:8px;width:220px">
       </div>
 
-      <!-- supplier selector row -->
-      <div class="sup-selector-row">
-        <div class="sup-selector-wrap">
-          <label class="sup-selector-label">Select Supplier</label>
-          <div style="display:flex;gap:8px;align-items:center">
-            <select id="supplier-select" onchange="showSupplierInsights(this.value)"
-              class="sup-select">
-              <option value="">— choose a supplier —</option>
-            </select>
-            <input type="text" id="supplier-search" placeholder="🔍 Search…"
-              oninput="filterSupplierDropdown(this.value)"
-              class="sup-search-input">
-          </div>
+      <!-- consolidated summary table (all suppliers) -->
+      <div id="supplier-table-wrap" style="display:none;margin-bottom:20px">
+        <table class="sup-summary-table">
+          <thead>
+            <tr>
+              <th>Supplier</th>
+              <th style="text-align:center">Invoices</th>
+              <th style="text-align:right">Invoice Total</th>
+              <th style="text-align:right">GRN Total</th>
+              <th style="text-align:right">Balance</th>
+              <th style="text-align:center">Status</th>
+            </tr>
+          </thead>
+          <tbody id="supplier-table-body"></tbody>
+        </table>
+      </div>
+
+      <!-- insights panel (hidden until a row is clicked) -->
+      <div id="supplier-insights" style="display:none">
+
+        <!-- selected supplier header -->
+        <div class="sup-detail-header">
+          <div id="sup-detail-title" style="font-size:14px;font-weight:700;color:#1a1a2e"></div>
+          <button class="btn-sm" onclick="closeSupplierDrilldown()">✕ Close</button>
         </div>
-      </div>
-
-      <!-- insights panel (hidden until supplier chosen) -->
-      <div id="supplier-insights" style="display:none;margin-top:18px">
 
         <!-- KPI summary bar -->
         <div id="sup-kpis" class="sup-kpi-bar"></div>
@@ -443,6 +453,19 @@
     <div class="modal-btns">
       <button onclick="confirmCancel()">Cancel</button>
       <button class="btn-primary" onclick="confirmOK()">Confirm</button>
+    </div>
+  </div>
+</div>
+
+<!-- EXTRACT CHOICE MODAL -->
+<div class="modal-overlay" id="extract-choice-modal" style="display:none">
+  <div class="modal" style="max-width:420px">
+    <h3 id="ec-title">Extract Pages</h3>
+    <p id="ec-msg" style="color:#6b7280;font-size:13px;margin:8px 0 18px"></p>
+    <div style="display:flex;flex-direction:column;gap:10px">
+      <button class="btn-primary" id="ec-remaining-btn" onclick="extractChoiceRemaining()"></button>
+      <button class="btn-warn" id="ec-all-btn" onclick="extractChoiceAll()"></button>
+      <button onclick="extractChoiceCancel()">Cancel</button>
     </div>
   </div>
 </div>

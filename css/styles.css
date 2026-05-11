@@ -716,3 +716,22 @@ tr.selected td { background: #eff6ff; }
 .si-action-hint    { font-size:11px; color:#4f46e5; font-style:italic; }
 .sup-tfoot         { background:#f8f9fa; font-weight:700; font-size:12px; }
 .sup-tfoot td      { padding:8px 10px; }
+
+/* Supplier summary table */
+.sup-summary-table      { width:100%; font-size:13px; border-collapse:collapse; background:#fff; border:1px solid #e5e7eb; border-radius:10px; overflow:hidden; }
+.sup-summary-table thead tr { background:#f8f9fa; }
+.sup-summary-table th   { padding:10px 14px; text-align:left; font-size:10px; font-weight:700; text-transform:uppercase; letter-spacing:.5px; color:#6b7280; border-bottom:2px solid #e9ecef; }
+.sup-summary-table td   { padding:10px 14px; border-bottom:1px solid #f3f4f6; }
+.sup-tbl-row            { cursor:pointer; transition:background .15s; }
+.sup-tbl-row:hover td   { background:#f0f4ff; }
+.sup-tbl-selected td    { background:#eef2ff !important; }
+.sup-tbl-selected .sup-tbl-name { font-weight:700; color:#4338ca; }
+.sup-tbl-name           { font-weight:600; color:#1a1a2e; max-width:260px; }
+
+/* Supplier detail header */
+.sup-detail-header      { display:flex; align-items:center; gap:10px; padding:12px 0 14px; border-top:2px solid #e5e7eb; margin-top:4px; margin-bottom:4px; }
+
+/* diff colours for table cells */
+.diff-ok   { color:#057a55; font-weight:700; }
+.diff-warn { color:#92400e; font-weight:700; }
+.diff-bad  { color:#c81e1e; font-weight:700; }

@@ -308,15 +308,71 @@ function startExtraction() {
   if(!pages.length){alert('No valid pages in range.');return;}
   _runExtractionPages(pages);
 }
+// ── state for extract-choice modal ───────────────────────────────
+let _ecAllPages = [], _ecRemainingPages = [];
+
 function startExtractionAll() {
-  const srcTotal=(cycle?.sources||[]).find(s=>s.pdfName===activePdfName)?.pageCount||0;
-  if(!srcTotal){alert('PDF not loaded or page count unknown.');return;}
-  const cost=srcTotal*Extractor.costPerPage;
-  showConfirm(`Extract all ${srcTotal} pages?`,`Estimated cost: $${cost.toFixed(2)}`,()=>{
-    confirmCancel();
-    document.getElementById('page-range-input').value='all';
-    _runExtractionPages(Array.from({length:srcTotal},(_,i)=>i+1));
+  const srcTotal = (cycle?.sources||[]).find(s=>s.pdfName===activePdfName)?.pageCount || 0;
+  if (!srcTotal) { alert('PDF not loaded or page count unknown.'); return; }
+
+  const allPages  = Array.from({length:srcTotal}, (_,i) => i+1);
+  const done      = allPages.filter(pg => {
+    const r = cycle?.pages?.[`${activePdfName}::${pg}`];
+    return r && (r.status === 'ok' || r.status === 'manual');
   });
+  const remaining = allPages.filter(pg => {
+    const r = cycle?.pages?.[`${activePdfName}::${pg}`];
+    return !r || (r.status !== 'ok' && r.status !== 'manual');
+  });
+
+  _ecAllPages       = allPages;
+  _ecRemainingPages = remaining;
+
+  if (done.length > 0 && remaining.length > 0) {
+    // Some already done, some pending — give user the choice
+    const remCost = (remaining.length * Extractor.costPerPage).toFixed(4);
+    const allCost = (allPages.length  * Extractor.costPerPage).toFixed(4);
+    document.getElementById('ec-title').textContent = `${done.length} of ${srcTotal} pages already extracted`;
+    document.getElementById('ec-msg').textContent   =
+      `${remaining.length} page${remaining.length>1?'s':''} still pending. What would you like to do?`;
+    document.getElementById('ec-remaining-btn').textContent =
+      `Extract remaining ${remaining.length} pages  (~$${remCost})`;
+    document.getElementById('ec-all-btn').textContent =
+      `Re-extract all ${srcTotal} pages  (~$${allCost})`;
+    document.getElementById('extract-choice-modal').style.display = 'flex';
+  } else if (remaining.length === 0) {
+    // All already extracted — confirm re-extract
+    const cost = (allPages.length * Extractor.costPerPage).toFixed(4);
+    showConfirm(
+      `All ${srcTotal} pages already extracted`,
+      `Re-extract everything? Estimated cost: $${cost}`,
+      () => { confirmCancel(); document.getElementById('page-range-input').value='all'; _runExtractionPages(allPages, true); }
+    );
+  } else {
+    // Nothing extracted yet — simple confirm
+    const cost = (srcTotal * Extractor.costPerPage).toFixed(4);
+    showConfirm(`Extract all ${srcTotal} pages?`, `Estimated cost: $${cost}`, () => {
+      confirmCancel();
+      document.getElementById('page-range-input').value = 'all';
+      _runExtractionPages(allPages);
+    });
+  }
+}
+
+function extractChoiceRemaining() {
+  document.getElementById('extract-choice-modal').style.display = 'none';
+  document.getElementById('page-range-input').value = 'remaining';
+  _runExtractionPages(_ecRemainingPages);
+}
+
+function extractChoiceAll() {
+  document.getElementById('extract-choice-modal').style.display = 'none';
+  document.getElementById('page-range-input').value = 'all';
+  _runExtractionPages(_ecAllPages, true);
+}
+
+function extractChoiceCancel() {
+  document.getElementById('extract-choice-modal').style.display = 'none';
 }
 function stopExtraction(){ abortFlag=true; }
 function retryFailed() {
@@ -1131,48 +1187,70 @@ let _selectedSupplier = null;
 function renderSupplierAudit() {
   const emptyEl    = document.getElementById('supplier-empty');
   const insightsEl = document.getElementById('supplier-insights');
-  const selectEl   = document.getElementById('supplier-select');
+  const tableWrap  = document.getElementById('supplier-table-wrap');
 
   if (!reconRows.length) {
-    emptyEl.style.display = 'block';
+    emptyEl.style.display    = 'block';
     insightsEl.style.display = 'none';
-    document.querySelector('.sup-selector-row').style.display = 'none';
+    tableWrap.style.display  = 'none';
     return;
   }
 
   _supplierStats = Reconcile.getSupplierStats(reconRows, grnOnlyRows);
 
-  const totalSuppliers   = _supplierStats.length;
+  const totalSuppliers      = _supplierStats.length;
   const suppliersWithIssues = _supplierStats.filter(s => s.actionCount > 0).length;
   document.getElementById('supplier-audit-sub').textContent =
-    `${totalSuppliers} suppliers · ${suppliersWithIssues} with issues`;
+    `${totalSuppliers} suppliers · ${suppliersWithIssues} with issues · click a row for details`;
 
-  emptyEl.style.display = 'none';
-  document.querySelector('.sup-selector-row').style.display = 'block';
+  emptyEl.style.display   = 'none';
+  tableWrap.style.display = 'block';
 
-  // populate dropdown sorted: action-first then name
-  const prev = selectEl.value;
-  selectEl.innerHTML = '<option value="">— choose a supplier —</option>' +
-    _supplierStats.map(s => {
-      const badge = s.actionCount > 0 ? ` ⚠ (${s.actionCount})` : s.invoiceCount > 0 ? ' ✓' : '';
-      return `<option value="${esc(s.vendor)}">${esc(s.vendor)}${badge}</option>`;
-    }).join('');
+  _renderSupplierTableBody(_supplierStats);
 
-  // restore previous selection if still valid
-  if (prev && _supplierStats.find(s => s.vendor === prev)) {
-    selectEl.value = prev;
-    showSupplierInsights(prev);
-  } else {
-    insightsEl.style.display = 'none';
+  // restore selected supplier if still valid
+  if (_selectedSupplier && _supplierStats.find(s => s.vendor === _selectedSupplier)) {
+    showSupplierInsights(_selectedSupplier);
   }
 }
 
-function filterSupplierDropdown(q) {
-  const lq  = (q || '').toLowerCase();
-  const sel = document.getElementById('supplier-select');
-  Array.from(sel.options).forEach(opt => {
-    opt.style.display = (!lq || opt.value === '' || opt.text.toLowerCase().includes(lq)) ? '' : 'none';
-  });
+function _renderSupplierTableBody(list) {
+  const tbody = document.getElementById('supplier-table-body');
+  if (!list.length) {
+    tbody.innerHTML = '<tr><td colspan="6" class="empty-state" style="text-align:center;padding:20px">No suppliers match.</td></tr>';
+    return;
+  }
+  tbody.innerHTML = list.map(s => {
+    const diffAbs = Math.abs(s.netDiff);
+    const diffCls = diffAbs === 0 ? 'diff-ok' : s.netDiff > 0 ? 'diff-warn' : 'diff-bad';
+    const diffStr = diffAbs === 0 ? '✓ Balanced' : (s.netDiff > 0 ? '+' : '') + fmtINR(s.netDiff);
+    let statusHtml;
+    if (s.actionCount > 0) {
+      statusHtml = `<span class="sup-chip sup-chip-disc" style="font-size:10px">⚠ ${s.actionCount} issue${s.actionCount>1?'s':''}</span>`;
+    } else if (s.invoiceCount > 0 && diffAbs === 0) {
+      statusHtml = `<span class="sup-chip sup-chip-matched" style="font-size:10px">✅ Clear</span>`;
+    } else {
+      statusHtml = `<span class="sup-chip sup-chip-resolved" style="font-size:10px">✓ Resolved</span>`;
+    }
+    const isSelected = _selectedSupplier === s.vendor;
+    return `<tr class="sup-tbl-row${isSelected ? ' sup-tbl-selected' : ''}"
+              onclick="showSupplierInsights(${JSON.stringify(s.vendor)})"
+              title="Click to view details for ${esc(s.vendor)}">
+      <td class="sup-tbl-name">${esc(s.vendor)}</td>
+      <td style="text-align:center">${s.invoiceCount}</td>
+      <td style="text-align:right;font-weight:600">${fmtINR(s.invoiceTotal)}</td>
+      <td style="text-align:right">${fmtINR(s.grnTotal)}</td>
+      <td style="text-align:right" class="${diffCls}">${diffStr}</td>
+      <td style="text-align:center">${statusHtml}</td>
+    </tr>`;
+  }).join('');
+}
+
+function filterSupplierTable(q) {
+  const lq = (q || '').toLowerCase();
+  if (!_supplierStats) return;
+  const filtered = lq ? _supplierStats.filter(s => s.vendor.toLowerCase().includes(lq)) : _supplierStats;
+  _renderSupplierTableBody(filtered);
 }
 
 function showSupplierInsights(vendorName) {
@@ -1182,7 +1260,20 @@ function showSupplierInsights(vendorName) {
   const s = _supplierStats.find(x => x.vendor === vendorName);
   if (!s) { insightsEl.style.display = 'none'; return; }
 
+  _selectedSupplier = vendorName;
   insightsEl.style.display = 'block';
+
+  // set detail header title
+  const titleEl = document.getElementById('sup-detail-title');
+  if (titleEl) titleEl.textContent = vendorName;
+
+  // highlight selected row in summary table
+  document.querySelectorAll('.sup-tbl-row').forEach(tr => {
+    tr.classList.toggle('sup-tbl-selected', tr.querySelector('.sup-tbl-name')?.textContent === vendorName);
+  });
+
+  // scroll insights into view
+  insightsEl.scrollIntoView({ behavior: 'smooth', block: 'start' });
 
   const diffAbs   = Math.abs(s.netDiff);
   const matchStr  = Extractor.matchToMaster(vendorName);
@@ -1336,15 +1427,13 @@ function showSupplierInsights(vendorName) {
 }
 
 function openSupplierDrilldown(vendorName) {
-  // legacy compatibility: select vendor in dropdown and show insights
-  const sel = document.getElementById('supplier-select');
-  if (sel) { sel.value = vendorName; showSupplierInsights(vendorName); }
+  showSupplierInsights(vendorName);
 }
 
 function closeSupplierDrilldown() {
   document.getElementById('supplier-insights').style.display = 'none';
-  const sel = document.getElementById('supplier-select');
-  if (sel) sel.value = '';
+  _selectedSupplier = null;
+  document.querySelectorAll('.sup-tbl-row').forEach(tr => tr.classList.remove('sup-tbl-selected'));
 }
 
 
